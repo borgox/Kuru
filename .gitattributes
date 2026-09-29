@@ -1,0 +1,11 @@
+# Normalize all text to LF in the repository and on checkout, so there is no
+# CRLF/LF churn regardless of contributor platform.
+* text=auto eol=lf
+
+# Explicit binary types (never touch line endings).
+*.png binary
+*.jpg binary
+*.ico binary
+*.dll binary
+*.exe binary
+*.lib binary
