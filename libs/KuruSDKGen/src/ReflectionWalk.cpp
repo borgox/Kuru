@@ -142,7 +142,7 @@ Kuru::Common::DumpSchema::DumpDocument gDocument;
 bool gDocumentValid = false;
 
 void Log(const std::string& message) {
-    const std::string line = "[KuruDump] " + message + "\n";
+    const std::string line = "[KuruSDKGen] " + message + "\n";
     OutputDebugStringA(line.c_str());
     if (gLog.is_open()) {
         gLog << line;
@@ -178,7 +178,7 @@ bool ReadableObject(const T* ptr) {
 }
 
 void OpenLog() {
-    gLog.open(gOutputDirectory + "\\KuruDump.log", std::ios::app);
+    gLog.open(gOutputDirectory + "\\KuruSDKGen.log", std::ios::app);
 }
 
 std::string DirectoryFromPath(std::string_view path) {
@@ -207,9 +207,9 @@ void NotifyUser(const char* title, const std::string& message, UINT icon) {
 
 DWORD FailMainThread(const std::string& reason) {
     Log(reason);
-    NotifyUser("KuruDump failed",
+    NotifyUser("KuruSDKGen failed",
                reason + "\n\nOutput directory:\n" + gOutputDirectory +
-                   "\n\nCheck KuruDump.log if it was created.",
+                   "\n\nCheck KuruSDKGen.log if it was created.",
                MB_ICONERROR);
     return 0;
 }
@@ -730,8 +730,8 @@ DWORD WINAPI MainThread(LPVOID parameter) {
     const auto selfModule = reinterpret_cast<HMODULE>(parameter);
     if (!InitializeOutputDirectory(selfModule)) {
         gOutputDirectory = ".";
-        NotifyUser("KuruDump failed",
-                   "Could not resolve the KuruDump DLL path, so the dumper cannot choose an output directory.",
+        NotifyUser("KuruSDKGen failed",
+                   "Could not resolve the KuruSDKGen DLL path, so the dumper cannot choose an output directory.",
                    MB_ICONERROR);
         return 0;
     }

@@ -20,7 +20,7 @@ DWORD WINAPI Worker(LPVOID) {
     Kuru::Common::DumpSchema::DumpDocument document;
     std::string dir;
     if (!Kuru::Dump::Run(gSelf, document, dir)) {
-        MessageBoxA(nullptr, "Reflection walk failed, see KuruDump.log.", "KuruSDKGen",
+        MessageBoxA(nullptr, "Reflection walk failed, see KuruSDKGen.log.", "KuruSDKGen",
                     MB_ICONERROR | MB_OK);
         return 0;
     }
@@ -29,7 +29,7 @@ DWORD WINAPI Worker(LPVOID) {
     const bool ok = Kuru::SdkGen::Generate(document, outputPath);
     const std::string message =
         ok ? "SDK generated.\n\nOutput:\n" + outputPath.string()
-           : "SDK generation failed.\n\nSee KuruDump.log in:\n" + dir;
+           : "SDK generation failed.\n\nSee KuruSDKGen.log in:\n" + dir;
     MessageBoxA(nullptr, message.c_str(), "KuruSDKGen", (ok ? MB_ICONINFORMATION : MB_ICONERROR) | MB_OK);
     return 0;
 }

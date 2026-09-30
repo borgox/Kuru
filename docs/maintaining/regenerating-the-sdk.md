@@ -17,7 +17,7 @@ When it finishes you get a "SDK generated" message box, and next to the DLL you 
 - `generated-sdk/` - the headers (`KuruSDK.hpp`, `Kuru/`, `Generated/`). This appearing is the real success
   signal.
 - `dump.json` - the raw reflection dump, tens of MB with the full object set.
-- `KuruDump.log` - a detailed log of the walk. This is where to look if something went wrong; a
+- `KuruSDKGen.log` - a detailed log of the walk. This is where to look if something went wrong; a
   `GNames pattern not found` line there means the dumper's byte pattern is stale for this game version (see
   [finding patterns](finding-patterns.md)).
 
