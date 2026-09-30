@@ -4,21 +4,24 @@ The generated SDK bakes Rocket League's offsets into typed headers (see
 [the reflected SDK](../modding/concepts/10-the-reflected-sdk.md)). Every game update shifts offsets, so after
 one you regenerate it. The loader itself does not need regenerating; it resolves the engine at runtime.
 
-## The two steps
+## Regenerating
 
-Today generation is two steps:
+Inject `KuruSDKGenRuntime` into a fully loaded game, at the main menu (Xtreme Injector, or any injector). It
+has no UI of its own; it runs once and reports with message boxes. In one pass it walks `GObjects`, dumps
+every class, property, and function (names, kinds, offsets, flags), and generates the typed headers.
 
-1. **Dump.** Build and inject the dumper (`KuruDump`) into a fully loaded game, at the main menu. It walks
-   `GObjects` and writes every class, property, and function, with names, kinds, offsets, and flags, to a dump
-   file.
-2. **Generate.** Run the offline generator (`KuruSDKGen`) on that dump together with `sdk-base`. It emits the
-   typed headers into `generated-sdk`.
+## Checking it worked
 
-An injectable generator that does both in one in-process pass is planned; until it lands, this is the flow.
+When it finishes you get a "SDK generated" message box, and next to the DLL you will find:
 
-## Sanity-checking the result
+- `generated-sdk/` - the headers (`KuruSDK.hpp`, `Kuru/`, `Generated/`). This appearing is the real success
+  signal.
+- `dump.json` - the raw reflection dump, tens of MB with the full object set.
+- `KuruDump.log` - a detailed log of the walk. This is where to look if something went wrong; a
+  `GNames pattern not found` line there means the dumper's byte pattern is stale for this game version (see
+  [finding patterns](finding-patterns.md)).
 
-Before trusting a fresh SDK, confirm it looks right:
+Then confirm the SDK itself looks right:
 
 - The dump's object count is in the expected range, roughly 180,000 or more in a running game. A tiny count
   means the dump ran before the game was ready.

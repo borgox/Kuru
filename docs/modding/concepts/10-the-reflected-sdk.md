@@ -20,14 +20,11 @@ A mod pulls in both through the one umbrella header, so you rarely think about t
 
 ## How it's generated
 
-Today the SDK is built in two steps:
-<!-- TODO: This is gonna bechanged cause of runtime -->
-1. **Dump.** An injected component (`KuruDump`) walks `GObjects`, reads every class's properties and functions
-   — names, kinds, offsets, flags - and writes it all to a dump file.
-2. **Generate.** An offline tool (`KuruSDKGen`) reads that dump plus `sdk-base` and emits the typed headers: a
-   struct per class with fields at their offsets, a params struct per function, enums, and so on.
+`KuruSDKGenRuntime`, injected into a running game, does it in one pass: it walks `GObjects`, reads every
+class's properties and functions (names, kinds, offsets, flags), and emits the typed headers: a struct per
+class with fields at their offsets, a params struct per function, enums, and so on.
 
-The result is `generated-sdk` - the runtime reflection frozen into code. The Objects tab and the generated
+The result is `generated-sdk`, the runtime reflection frozen into code. The Objects tab and the generated
 headers are, again, two views of the same data.
 
 ## Why it's version-specific
@@ -37,12 +34,6 @@ generated from. When Rocket League updates and offsets shift, `car->SomeField` w
 you regenerate the SDK against the new version. The loader itself doesn't need regenerating (it resolves the
 engine at runtime; see [how Kuru boots](06-how-kuru-boots.md)); the *SDK* does, and that's the main thing an
 update asks of you.
-
-## The direction it's heading
-
-The two-step dump-then-generate flow works but is clumsy. The plan is a single injectable generator that dumps
-and emits the headers in one in-process pass, removing the separate dump file and offline step. Until that
-lands, dump-then-generate is how a fresh SDK is produced.
 
 The [maintaining](../../maintaining) docs cover regenerating the SDK and confirming it's correct against a new
 game build.
