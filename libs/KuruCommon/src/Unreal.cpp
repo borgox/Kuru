@@ -6,6 +6,8 @@
 #include <cwchar>
 #include <string>
 
+#include <windows.h>
+
 namespace Kuru::Common {
 
 namespace {
@@ -17,6 +19,22 @@ constexpr std::size_t MaxNameChars = 1024;
 [[nodiscard]] bool LooksLikePointer(const void* pointer) noexcept {
     const auto value = reinterpret_cast<std::uintptr_t>(pointer);
     return value >= 0x10000ULL && value <= 0x00007FFFFFFFFFFFULL;
+}
+
+// SEH-guarded raw copy of a null-terminated wide string.
+[[nodiscard]] int SafeCopyWideName(const wchar_t* source, wchar_t* destination, int maxChars) noexcept {
+    __try {
+        for (int index = 0; index < maxChars; ++index) {
+            const wchar_t ch = source[index];
+            destination[index] = ch;
+            if (ch == L'\0') {
+                return index;
+            }
+        }
+        return maxChars;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
 }
 
 [[nodiscard]] bool IsPlausibleNameString(const std::wstring& value) {
@@ -45,29 +63,19 @@ std::optional<std::string> TryReadFNameEntryString(const TArray<void*>* gNames, 
     }
 
     void* entry = gNames->Data[name.Index];
-    if (!LooksLikePointer(entry) || !IsReadableMemory(entry, FNameEntryWideNameOffset + sizeof(wchar_t))) {
+    if (!LooksLikePointer(entry)) {
         return std::nullopt;
     }
 
     const auto* wideName = reinterpret_cast<const wchar_t*>(reinterpret_cast<const std::uint8_t*>(entry) + FNameEntryWideNameOffset);
-    if (!IsReadableMemory(wideName, sizeof(wchar_t))) {
+
+    wchar_t buffer[MaxNameChars];
+    const int count = SafeCopyWideName(wideName, buffer, static_cast<int>(MaxNameChars) - 1);
+    if (count < 0) {
         return std::nullopt;
     }
 
-    std::wstring value;
-    value.reserve(64);
-    for (std::size_t index = 0; index < MaxNameChars; ++index) {
-        if (!IsReadableMemory(wideName + index, sizeof(wchar_t))) {
-            return std::nullopt;
-        }
-
-        const wchar_t ch = wideName[index];
-        if (ch == L'\0') {
-            break;
-        }
-        value.push_back(ch);
-    }
-
+    const std::wstring value(buffer, buffer + count);
     if (!IsPlausibleNameString(value)) {
         return std::nullopt;
     }
