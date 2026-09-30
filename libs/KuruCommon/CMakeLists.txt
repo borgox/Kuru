@@ -1,5 +1,4 @@
 add_library(KuruCommon STATIC
-    src/DumpSchema.cpp
     src/Globals.cpp
     src/Memory.cpp
     src/Pattern.cpp

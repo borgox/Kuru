@@ -1,17 +1,51 @@
 #include <windows.h>
-// TODO: literally TODO
+
+#include <filesystem>
+#include <string>
+
+#include <Kuru/Common/DumpSchema.hpp>
+
+namespace Kuru::Dump {
+bool Run(void* selfModule, Kuru::Common::DumpSchema::DumpDocument& outDocument, std::string& outDir);
+}
+namespace Kuru::SdkGen {
+bool Generate(const Kuru::Common::DumpSchema::DumpDocument& document, const std::filesystem::path& outputPath);
+}
+
+namespace {
+
+HMODULE gSelf = nullptr;
+
+DWORD WINAPI Worker(LPVOID) {
+    Kuru::Common::DumpSchema::DumpDocument document;
+    std::string dir;
+    if (!Kuru::Dump::Run(gSelf, document, dir)) {
+        MessageBoxA(nullptr, "Reflection walk failed, see KuruDump.log.", "KuruSDKGenRuntime",
+                    MB_ICONERROR | MB_OK);
+        return 0;
+    }
+
+    const std::filesystem::path outputPath = std::filesystem::path(dir) / "generated-sdk";
+    const bool ok = Kuru::SdkGen::Generate(document, outputPath);
+    const std::string message =
+        ok ? "SDK generated.\n\nOutput:\n" + outputPath.string()
+           : "SDK generation failed.\n\nSee KuruDump.log in:\n" + dir;
+    MessageBoxA(nullptr, message.c_str(), "KuruSDKGenRuntime", (ok ? MB_ICONINFORMATION : MB_ICONERROR) | MB_OK);
+    return 0;
+}
+
+}  // namespace
+
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
     (void)reserved;
-
     switch (reason) {
     case DLL_PROCESS_ATTACH:
+        gSelf = module;
         DisableThreadLibraryCalls(module);
-        break;
-    case DLL_PROCESS_DETACH:
+        CreateThread(nullptr, 0, Worker, nullptr, 0, nullptr);
         break;
     default:
         break;
     }
-
     return TRUE;
 }

@@ -18,7 +18,5 @@ add_subdirectory(third_party)
 add_subdirectory(sdk-base)
 
 add_subdirectory(libs/KuruCommon)
-add_subdirectory(libs/KuruDump)
-add_subdirectory(libs/KuruSDKGen) #TODO: remove KuruDump and KuruSDKGen and keep only runtime.
 add_subdirectory(libs/KuruSDKGenRuntime)
 add_subdirectory(libs/KuruLoader)

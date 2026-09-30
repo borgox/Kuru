@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace Kuru::Common::DumpSchema {
@@ -69,8 +68,5 @@ struct DumpDocument {
     std::vector<std::string> names;
     std::vector<ObjectRecord> objects;
 };
-
-[[nodiscard]] std::string JsonEscape(std::string_view value);
-[[nodiscard]] bool ReadJsonFile(std::string_view path, DumpDocument& document, std::string& error);
 
 } // namespace Kuru::Common::DumpSchema

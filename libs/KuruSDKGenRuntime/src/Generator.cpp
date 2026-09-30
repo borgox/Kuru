@@ -7,7 +7,6 @@
 #include <map>
 #include <optional>
 #include <set>
-#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -124,14 +123,8 @@ struct DumpModel {
     return std::string(pos == std::string_view::npos ? fullName : fullName.substr(pos + 1));
 }
 
-[[nodiscard]] DumpModel ReadDump(const std::filesystem::path& dumpPath) {
+[[nodiscard]] DumpModel BuildModel(const Kuru::Common::DumpSchema::DumpDocument& document) {
     DumpModel model;
-    Kuru::Common::DumpSchema::DumpDocument document;
-    std::string error;
-    if (!Kuru::Common::DumpSchema::ReadJsonFile(dumpPath.string(), document, error)) {
-        std::cerr << "failed to parse dump.json: " << error << '\n';
-        return model;
-    }
 
     const auto convertProperty = [](const Kuru::Common::DumpSchema::PropertyRecord& source) {
         PropertyInfo property;
@@ -689,6 +682,19 @@ void AppendBaseExtensionWrapper(std::string& text, const TypeInfo& type, const F
     return text;
 }
 
+/*
+ * Parse a BoolProperty bit mask, RL stores this as a 64 bit field
+ *
+ */
+[[nodiscard]] std::uint64_t ParseBitMask(const std::string& mask) {
+    if (mask.empty()) return 0;
+    try {
+        return std::stoull(mask, nullptr, 0);
+    } catch (const std::exception&) {
+        return 0;
+    }
+}
+
 [[nodiscard]] std::string MakeStructOrClassDefinition(const TypeInfo& type, const DumpModel& model) {
     std::string text;
     const bool isClass = type.ClassName == "Class";
@@ -747,7 +753,7 @@ void AppendBaseExtensionWrapper(std::string& text, const TypeInfo& type, const F
             std::vector<const PropertyInfo*> bools;
             for (std::size_t index = propertyIndex; index < groupEnd; ++index) bools.push_back(&props[index]);
             std::sort(bools.begin(), bools.end(), [](const PropertyInfo* lhs, const PropertyInfo* rhs) {
-                return std::stoul(lhs->BitMask, nullptr, 0) < std::stoul(rhs->BitMask, nullptr, 0);
+                return ParseBitMask(lhs->BitMask) < ParseBitMask(rhs->BitMask);
             });
             /* Emit anonymous fill bits for reserved/unused bits so each bool lands on its true
              bit_mask position. Plain sequential ":1" packing misaligns non-contiguous masks
@@ -756,9 +762,9 @@ void AppendBaseExtensionWrapper(std::string& text, const TypeInfo& type, const F
             */
             unsigned nextBit = 0;
             for (const PropertyInfo* bit : bools) {
-                const unsigned long mask = std::stoul(bit->BitMask, nullptr, 0);
+                const std::uint64_t mask = ParseBitMask(bit->BitMask);
                 unsigned bitIndex = 0;
-                while (bitIndex < 32 && !((mask >> bitIndex) & 1UL)) ++bitIndex;
+                while (bitIndex < 32 && !((mask >> bitIndex) & 1ULL)) ++bitIndex;
                 if (bitIndex > nextBit) {
                     text += "    std::uint32_t : " + std::to_string(bitIndex - nextBit) + ";\n";
                 }
@@ -972,7 +978,7 @@ void AppendBaseExtensionWrapper(std::string& text, const TypeInfo& type, const F
            "using namespace Kuru::RL;\n";
 }
 
-[[nodiscard]] std::string MakeReadme(std::string_view dumpPath, const DumpModel& model) {
+[[nodiscard]] std::string MakeReadme(const DumpModel& model) {
     std::size_t manualSkipped = 0;
     std::size_t classes = 0;
     std::size_t structs = 0;
@@ -986,13 +992,10 @@ void AppendBaseExtensionWrapper(std::string& text, const TypeInfo& type, const F
 
     std::string text;
     text += "# Generated KuruSDK\n\n";
-    text += "This directory was emitted by `KuruSDKGen`.\n\n";
+    text += "This directory was emitted by the injected `KuruSDKGenRuntime`, straight from the live game's reflection.\n\n";
     text += "- Base SDK types are included through `KuruSDKBase.hpp` and are never duplicated.\n";
     text += "- Reflected classes, structs, enums, typed params wrappers, `StaticClass`, and default-object helpers are emitted under `Generated/Packages`.\n";
     text += "- Generated wrappers call Base SDK `UObject::ProcessEvent` and cache the reflected `UFunction*` by full name.\n";
-    text += "- Source dump: `";
-    text += dumpPath;
-    text += "`\n";
     text += "- Counts: classes=";
     text += std::to_string(classes);
     text += " structs=";
@@ -1017,14 +1020,6 @@ void AppendBaseExtensionWrapper(std::string& text, const TypeInfo& type, const F
     return text;
 }
 
-void PrintManualRegistry() {
-    std::cout << "Manual Base SDK reflected type registry (" << Kuru::SDK::Metadata::BaseReflectedTypeCount()
-              << " types):\n";
-    for (const auto& type : Kuru::SDK::Metadata::BaseReflectedTypes) {
-        std::cout << "  " << type.FullName << " -> " << type.CppName << '\n';
-    }
-}
-
 bool WriteTextFile(const std::filesystem::path& path, std::string_view text) {
     std::filesystem::create_directories(path.parent_path());
     std::ofstream out(path, std::ios::binary);
@@ -1036,7 +1031,7 @@ bool WriteTextFile(const std::filesystem::path& path, std::string_view text) {
     return true;
 }
 
-bool EmitSdk(const DumpModel& model, const std::filesystem::path& dumpPath, const std::filesystem::path& outputPath) {
+bool EmitSdk(const DumpModel& model, const std::filesystem::path& outputPath) {
     std::map<std::string, std::vector<const TypeInfo*>> byPackage;
     for (const TypeInfo& type : model.Types) {
         if (IsManualType(type.FullName)) {
@@ -1070,68 +1065,19 @@ bool EmitSdk(const DumpModel& model, const std::filesystem::path& dumpPath, cons
            WriteTextFile(outputPath / "KuruSDK.hpp", MakeGeneratedSdkHeader()) &&
            WriteTextFile(outputPath / "Kuru" / "Api.hpp", MakeApiHeader()) &&
            WriteTextFile(outputPath / "Generated" / "NameCollisions.md", MakeNameCollisionReport(model)) &&
-           WriteTextFile(outputPath / "README.md", MakeReadme(dumpPath.string(), model));
+           WriteTextFile(outputPath / "README.md", MakeReadme(model));
 }
 
 } // namespace
 
-int main(int argc, char** argv) {
-    std::cout << "KuruSDKGen\n";
-    std::cout << "Usage: KuruSDKGen <dump.json> <sdk-base> <output-dir> [--dry-run]\n";
-
-    const std::span<char*> args(argv, static_cast<std::size_t>(argc));
-    const bool dryRun = std::any_of(args.begin(), args.end(), [](const char* arg) {
-        return std::string_view(arg ? arg : "") == "--dry-run";
-    });
-
-    if (argc < 4) {
-        PrintManualRegistry();
-        return argc == 1 ? 0 : 2;
+namespace Kuru::SdkGen {
+// Generate the reflected SDK into outputPath from the in-memory model the runtime's reflection walk produced
+bool Generate(const Kuru::Common::DumpSchema::DumpDocument& document, const std::filesystem::path& outputPath) {
+    try {
+        const DumpModel model = BuildModel(document);
+        return EmitSdk(model, outputPath);
+    } catch (const std::exception&) {
+        return false;
     }
-
-    const std::filesystem::path dumpPath = argv[1];
-    const std::filesystem::path sdkBasePath = argv[2];
-    const std::filesystem::path outputPath = argv[3];
-
-    if (!std::filesystem::exists(dumpPath)) {
-        std::cerr << "dump.json does not exist: " << dumpPath << '\n';
-        return 2;
-    }
-    if (!std::filesystem::exists(sdkBasePath)) {
-        std::cerr << "sdk-base path does not exist: " << sdkBasePath << '\n';
-        return 2;
-    }
-
-    std::cout << "Dump: " << dumpPath << '\n';
-    std::cout << "Base SDK: " << sdkBasePath << '\n';
-    std::cout << "Output: " << outputPath << '\n';
-    PrintManualRegistry();
-
-    const DumpModel model = ReadDump(dumpPath);
-    std::size_t manualSkipped = 0;
-    std::size_t classes = 0;
-    std::size_t structs = 0;
-    std::size_t enums = 0;
-    for (const TypeInfo& type : model.Types) {
-        manualSkipped += IsManualType(type.FullName) ? 1 : 0;
-        classes += !IsManualType(type.FullName) && type.ClassName == "Class" ? 1 : 0;
-        structs += !IsManualType(type.FullName) && type.ClassName == "ScriptStruct" ? 1 : 0;
-        enums += !IsManualType(type.FullName) && type.ClassName == "Enum" ? 1 : 0;
-    }
-    std::cout << "Reflected inventory: classes=" << classes
-              << " structs=" << structs
-              << " enums=" << enums
-              << " manual_skipped=" << manualSkipped << '\n';
-
-    if (dryRun) {
-        std::cout << "Dry run complete; generator will skip manual Base SDK definitions.\n";
-        return 0;
-    }
-
-    if (!EmitSdk(model, dumpPath, outputPath)) {
-        return 1;
-    }
-
-    std::cout << "Generated reflected SDK package headers.\n";
-    return 0;
 }
+}  // namespace Kuru::SdkGen
