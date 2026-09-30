@@ -20,7 +20,7 @@ A mod pulls in both through the one umbrella header, so you rarely think about t
 
 ## How it's generated
 
-`KuruSDKGenRuntime`, injected into a running game, does it in one pass: it walks `GObjects`, reads every
+`KuruSDKGen`, injected into a running game, does it in one pass: it walks `GObjects`, reads every
 class's properties and functions (names, kinds, offsets, flags), and emits the typed headers: a struct per
 class with fields at their offsets, a params struct per function, enums, and so on.
 

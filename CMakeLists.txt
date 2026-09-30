@@ -18,5 +18,5 @@ add_subdirectory(third_party)
 add_subdirectory(sdk-base)
 
 add_subdirectory(libs/KuruCommon)
-add_subdirectory(libs/KuruSDKGenRuntime)
+add_subdirectory(libs/KuruSDKGen)
 add_subdirectory(libs/KuruLoader)

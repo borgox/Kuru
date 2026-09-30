@@ -992,7 +992,7 @@ void AppendBaseExtensionWrapper(std::string& text, const TypeInfo& type, const F
 
     std::string text;
     text += "# Generated KuruSDK\n\n";
-    text += "This directory was emitted by the injected `KuruSDKGenRuntime`, straight from the live game's reflection.\n\n";
+    text += "This directory was emitted by the injected `KuruSDKGen`, straight from the live game's reflection.\n\n";
     text += "- Base SDK types are included through `KuruSDKBase.hpp` and are never duplicated.\n";
     text += "- Reflected classes, structs, enums, typed params wrappers, `StaticClass`, and default-object helpers are emitted under `Generated/Packages`.\n";
     text += "- Generated wrappers call Base SDK `UObject::ProcessEvent` and cache the reflected `UFunction*` by full name.\n";

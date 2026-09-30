@@ -6,7 +6,7 @@ one you regenerate it. The loader itself does not need regenerating; it resolves
 
 ## Regenerating
 
-Inject `KuruSDKGenRuntime` into a fully loaded game, at the main menu (Xtreme Injector, or any injector). It
+Inject `KuruSDKGen` into a fully loaded game, at the main menu (Xtreme Injector, or any injector). It
 has no UI of its own; it runs once and reports with message boxes. In one pass it walks `GObjects`, dumps
 every class, property, and function (names, kinds, offsets, flags), and generates the typed headers.
 

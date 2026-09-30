@@ -30,5 +30,4 @@ That is the DLL you inject. Build `Release` for anything you inject - it matches
 
 ## Other targets
 
-`KuruSDKGen`, `KuruSDKGenRuntime`, and `KuruDump` make up the SDK-generation toolchain. Building the
-loader doesn't need them.
+`KuruSDKGen` is the injectable SDK generator (a separate DLL). Building the loader doesn't need it.
