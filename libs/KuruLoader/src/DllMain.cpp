@@ -39,9 +39,6 @@ void* gRemoteFunctionAddress = nullptr;  // slot 71
 void* gCallDelegateAddress = nullptr;        // slot 69
 void** gVTable = nullptr;                // a live UObject vtable
 constexpr int kCallFunctionVTableIndex = 76;
-// Mapping done, flip back to true to find the vtable region if a game update changes it.
-constexpr bool kMappingMode = false;
-
 
 void* gPIExact = nullptr;  // resolved ProcessInternal address
 
@@ -571,32 +568,23 @@ DWORD WINAPI HostThread(LPVOID) {
     if (gProcessEventAddress) {
         Kuru::HookEngine::Install(gProcessEventAddress);
     }
-    if (kMappingMode && gVTable) {
-        // dev probe
-        for (const int slots[] = {64, 65, 66, 68, 69, 71, 72, 73, 74, 75, 76, 77, 78, 79}; int idx : slots) {
-            const std::string label = "v" + std::to_string(idx);
-            Kuru::HookEngine::Probe::Install(idx, gVTable[idx], label.c_str());
-        }
-        Kuru::HookEngine::Probe::RegisterConsoleCommand();
+    // All confirmed dispatch layers
+    if (gProcessDelegateAddress) {
+        Kuru::HookEngine::InstallProcessDelegate(gProcessDelegateAddress);        // 68 PD
+    }
+    if (gCallDelegateAddress) {
+        Kuru::HookEngine::InstallCallDelegate(gCallDelegateAddress);              // 69 CD
+    }
+    if (gRemoteFunctionAddress) {
+        Kuru::HookEngine::InstallProcessRemoteFunction(gRemoteFunctionAddress);   // 71 PRF
+    }
+    if (gVTable) {
+        Kuru::HookEngine::InstallCallFunction(gVTable[kCallFunctionVTableIndex]); // 76 CF
+    }
+    if (gPIExact) {
+        Kuru::HookEngine::InstallProcessInternal(gPIExact);                       // ProcessInternal
     } else {
-        // All confirmed dispatch layers
-        if (gProcessDelegateAddress) {
-            Kuru::HookEngine::InstallProcessDelegate(gProcessDelegateAddress);        // 68 PD
-        }
-        if (gCallDelegateAddress) {
-            Kuru::HookEngine::InstallCallDelegate(gCallDelegateAddress);              // 69 CD
-        }
-        if (gRemoteFunctionAddress) {
-            Kuru::HookEngine::InstallProcessRemoteFunction(gRemoteFunctionAddress);   // 71 PRF
-        }
-        if (gVTable) {
-            Kuru::HookEngine::InstallCallFunction(gVTable[kCallFunctionVTableIndex]); // 76 CF
-        }
-        if (gPIExact) {
-            Kuru::HookEngine::InstallProcessInternal(gPIExact);                       // ProcessInternal
-        } else {
-            Log("ProcessInternal NOT resolved");
-        }
+        Log("ProcessInternal NOT resolved");
     }
     Kuru::Gui::Install();
     return 0;
@@ -618,7 +606,6 @@ BOOL APIENTRY DllMain(const HMODULE module, const DWORD reason, const LPVOID res
         break;
     case DLL_PROCESS_DETACH:
         Kuru::Gui::Shutdown();
-        Kuru::HookEngine::Probe::ShutdownAll();
         Kuru::HookEngine::Shutdown();
         UnloadAllMods();
         Kuru::SDK::Shutdown();

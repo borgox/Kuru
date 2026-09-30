@@ -323,7 +323,7 @@ void DetourCallDelegate(Kuru::SDK::UObject* caller, std::uint64_t rawDelegateNam
         firstCall = false;
         Log("CallDelegate (slot 69) is FIRING; delegate=" + delegateName.ToString());
     }
-    *//
+    */
     Kuru::SDK::UFunction* function = nullptr;
     if (delegate && delegate->Object) {
         if (Kuru::SDK::UClass* cls = delegate->Object->GetClass()) {
