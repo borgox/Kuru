@@ -33,3 +33,29 @@ target_include_directories(imgui PUBLIC
     ${imgui_SOURCE_DIR}/backends
 )
 target_link_libraries(imgui PUBLIC d3d11 dxgi dxguid)
+
+# IconFontCppHeaders: header-only C++ defines for icon-font codepoints (Lucide, FontAwesome, ...).
+FetchContent_Declare(
+    iconfontcppheaders
+    GIT_REPOSITORY https://github.com/juliettef/IconFontCppHeaders.git
+    GIT_TAG        main
+)
+FetchContent_MakeAvailable(iconfontcppheaders)
+
+add_library(iconfonts INTERFACE)
+target_include_directories(iconfonts INTERFACE ${iconfontcppheaders_SOURCE_DIR})
+
+# Lucide icon font (ISC licensed). Fetched once into the build tree; the injector ships/loads it. If the
+# download is unavailable the injector still builds and simply renders without glyphs.
+set(KURU_LUCIDE_TTF ${CMAKE_BINARY_DIR}/lucide.ttf CACHE INTERNAL "Path to the Lucide font")
+if(NOT EXISTS ${KURU_LUCIDE_TTF})
+    file(DOWNLOAD
+        https://cdn.jsdelivr.net/npm/lucide-static/font/lucide.ttf
+        ${KURU_LUCIDE_TTF}
+        STATUS _lucide_status)
+    list(GET _lucide_status 0 _lucide_code)
+    if(NOT _lucide_code EQUAL 0)
+        message(WARNING "Could not download Lucide font (icons disabled): ${_lucide_status}")
+        file(REMOVE ${KURU_LUCIDE_TTF})
+    endif()
+endif()
