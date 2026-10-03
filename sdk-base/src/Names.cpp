@@ -5,6 +5,23 @@
 #include <sstream>
 
 namespace Kuru::SDK {
+namespace {
+
+// Compare a null-terminated wide name against a narrow (ASCII) string without allocating
+[[nodiscard]] bool WideEqualsNarrow(const wchar_t* wide, std::string_view narrow) {
+    if (!wide) {
+        return narrow.empty();
+    }
+    std::size_t i = 0;
+    for (; i < narrow.size(); ++i) {
+        if (wide[i] == L'\0' || wide[i] != static_cast<wchar_t>(static_cast<unsigned char>(narrow[i]))) {
+            return false;
+        }
+    }
+    return wide[i] == L'\0';
+}
+
+}  // namespace
 
 FName::FName(const wchar_t* name, EFindName findType) {
     if (auto* constructor = GetNameConstructor()) {
@@ -83,7 +100,7 @@ FName FName::Find(std::string_view name, bool add) {
         if (!entry) {
             continue;
         }
-        if (FString(entry->GetWideName()).ToAnsi() == name) {
+        if (WideEqualsNarrow(entry->GetWideName(), name)) {
             return FName(index);
         }
     }

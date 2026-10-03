@@ -2,6 +2,8 @@
 
 #include <Core/Runtime.hpp>
 
+#include <windows.h>
+
 #include <algorithm>
 #include <cwctype>
 
@@ -46,7 +48,19 @@ FString& FString::operator=(std::wstring_view value) {
 FString FString::Create(const wchar_t* value) { return FString(value); }
 FString FString::Create(std::wstring_view value) { return FString(value); }
 FString FString::FromAnsi(std::string_view value) { return FString(Widen(value)); }
-FString FString::FromUtf8(std::string_view value) { return FString(Widen(value)); }
+
+FString FString::FromUtf8(std::string_view value) {
+    if (value.empty()) {
+        return FString();
+    }
+    const int len = MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0);
+    if (len <= 0) {
+        return FString();
+    }
+    std::wstring wide(static_cast<std::size_t>(len), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), wide.data(), len);
+    return FString(wide);
+}
 
 std::string FString::ToAnsi() const {
     std::string result;
@@ -57,7 +71,18 @@ std::string FString::ToAnsi() const {
 }
 
 std::string FString::ToUtf8() const {
-    return ToAnsi();
+    const std::wstring_view view = View();
+    if (view.empty()) {
+        return {};
+    }
+    const int len =
+        WideCharToMultiByte(CP_UTF8, 0, view.data(), static_cast<int>(view.size()), nullptr, 0, nullptr, nullptr);
+    if (len <= 0) {
+        return {};
+    }
+    std::string result(static_cast<std::size_t>(len), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, view.data(), static_cast<int>(view.size()), result.data(), len, nullptr, nullptr);
+    return result;
 }
 
 bool FString::Equals(std::wstring_view other, bool caseSensitive) const {
