@@ -2,6 +2,7 @@
 
 #include "PropertyView.hpp"
 
+#include <Core/Flags.hpp>
 #include <Core/Globals.hpp>
 #include <Core/ObjectModel.hpp>
 
@@ -48,7 +49,7 @@ void DrawProperties(Kuru::SDK::UObject* object) {
         std::vector<Kuru::SDK::UProperty*> props;
         for (Kuru::SDK::UField* field = s->GetChildren(); field; field = field->Next) {
             Kuru::SDK::UClass* fieldClass = field->GetClass();
-            if (fieldClass && fieldClass->GetName().find("Property") != std::string::npos) {
+            if (fieldClass && fieldClass->HasAnyCastFlag(Kuru::SDK::CASTCLASS_UProperty)) {
                 props.push_back(reinterpret_cast<Kuru::SDK::UProperty*>(field));
             }
         }

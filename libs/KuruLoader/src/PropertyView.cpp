@@ -1,5 +1,6 @@
 #include "PropertyView.hpp"
 
+#include <Core/Flags.hpp>
 #include <Core/ObjectModel.hpp>
 
 #include <imgui.h>
@@ -39,17 +40,23 @@ bool Draw(Kuru::SDK::UProperty* prop, unsigned char* base, std::size_t size) {
     }
     unsigned char* p = base + offset;
 
-    if (kind == "IntProperty") {
+    // Dispatch on the property's class cast flags
+    Kuru::SDK::UClass* propClass = prop->GetClass();
+    const auto isKind = [propClass](std::uint64_t castFlags) {
+        return propClass && propClass->HasAnyCastFlag(castFlags);
+    };
+
+    if (isKind(Kuru::SDK::CASTCLASS_UIntProperty)) {
         edited = ImGui::InputInt("##v", reinterpret_cast<int*>(p));
-    } else if (kind == "FloatProperty") {
+    } else if (isKind(Kuru::SDK::CASTCLASS_UFloatProperty)) {
         edited = ImGui::InputFloat("##v", reinterpret_cast<float*>(p));
-    } else if (kind == "ByteProperty") {
+    } else if (isKind(Kuru::SDK::CASTCLASS_UByteProperty)) {
         int value = *p;
         if (ImGui::InputInt("##v", &value)) {
             *p = static_cast<unsigned char>(value & 0xFF);
             edited = true;
         }
-    } else if (kind == "BoolProperty") {
+    } else if (isKind(Kuru::SDK::CASTCLASS_UBoolProperty)) {
         std::uint64_t mask = reinterpret_cast<Kuru::SDK::UBoolProperty*>(prop)->BitMask;
         std::uint32_t& dword = *reinterpret_cast<std::uint32_t*>(p);
         bool value = (dword & static_cast<std::uint32_t>(mask)) != 0;
@@ -61,7 +68,8 @@ bool Draw(Kuru::SDK::UProperty* prop, unsigned char* base, std::size_t size) {
             }
             edited = true;
         }
-    } else if (kind == "ObjectProperty" || kind == "ComponentProperty" || kind == "ClassProperty") {
+    } else if (isKind(Kuru::SDK::CASTCLASS_UObjectProperty | Kuru::SDK::CASTCLASS_UComponentProperty |
+                      Kuru::SDK::CASTCLASS_UClassProperty)) {
         auto* obj = *reinterpret_cast<Kuru::SDK::UObject**>(p);
         ImGui::Text("%s", obj ? obj->GetName().c_str() : "None");
     } else {
