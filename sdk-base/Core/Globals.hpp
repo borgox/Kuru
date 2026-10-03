@@ -21,12 +21,6 @@ extern std::uint32_t GPsyonixBuildNumber;
 extern ProcessEventFunc ProcessEvent;
 extern ProcessInternalFunc ProcessInternal;
 extern ProcessDelegateFunc ProcessDelegate;
-extern ProcessRemoteFunctionFunc ProcessRemoteFunction;
-extern ScriptConsoleExecFunc ScriptConsoleExec;
-extern StaticFindObjectFunc StaticFindObject;
-extern StaticFindObjectFastFunc StaticFindObjectFast;
-extern StaticLoadObjectFunc StaticLoadObject;
-extern DynamicLoadObjectFunc DynamicLoadObject;
 
 bool KuruInitGlobals();
 

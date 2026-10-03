@@ -18,12 +18,6 @@ std::uint32_t GPsyonixBuildNumber = 0;
 ProcessEventFunc ProcessEvent = nullptr;
 ProcessInternalFunc ProcessInternal = nullptr;
 ProcessDelegateFunc ProcessDelegate = nullptr;
-ProcessRemoteFunctionFunc ProcessRemoteFunction = nullptr;
-ScriptConsoleExecFunc ScriptConsoleExec = nullptr;
-StaticFindObjectFunc StaticFindObject = nullptr;
-StaticFindObjectFastFunc StaticFindObjectFast = nullptr;
-StaticLoadObjectFunc StaticLoadObject = nullptr;
-DynamicLoadObjectFunc DynamicLoadObject = nullptr;
 
 void SetRuntimeBindings(const RuntimeBindings& bindings) noexcept {
     gBindings = bindings;
@@ -36,12 +30,6 @@ void SetRuntimeBindings(const RuntimeBindings& bindings) noexcept {
     ProcessEvent = bindings.ProcessEvent;
     ProcessInternal = bindings.ProcessInternal;
     ProcessDelegate = bindings.ProcessDelegate;
-    ProcessRemoteFunction = bindings.ProcessRemoteFunction;
-    ScriptConsoleExec = bindings.ScriptConsoleExec;
-    StaticFindObject = bindings.StaticFindObject;
-    StaticFindObjectFast = bindings.StaticFindObjectFast;
-    StaticLoadObject = bindings.StaticLoadObject;
-    DynamicLoadObject = bindings.DynamicLoadObject;
     gInitialized = true;
 }
 
@@ -76,12 +64,6 @@ FMalloc* GetMalloc() noexcept { return GMalloc; }
 ProcessEventFunc GetProcessEvent() noexcept { return ProcessEvent; }
 ProcessInternalFunc GetProcessInternal() noexcept { return ProcessInternal; }
 ProcessDelegateFunc GetProcessDelegate() noexcept { return ProcessDelegate; }
-ProcessRemoteFunctionFunc GetProcessRemoteFunction() noexcept { return ProcessRemoteFunction; }
-ScriptConsoleExecFunc GetScriptConsoleExec() noexcept { return ScriptConsoleExec; }
-StaticFindObjectFunc GetStaticFindObject() noexcept { return StaticFindObject; }
-StaticFindObjectFastFunc GetStaticFindObjectFast() noexcept { return StaticFindObjectFast; }
-StaticLoadObjectFunc GetStaticLoadObject() noexcept { return StaticLoadObject; }
-DynamicLoadObjectFunc GetDynamicLoadObject() noexcept { return DynamicLoadObject; }
 FNameConstructorFunc GetNameConstructor() noexcept { return gBindings.NameConstructor; }
 ObjectInitializerFunc GetObjectInitializer() noexcept { return gBindings.ObjectInitializer; }
 FMalloc* GetMemoryAllocator() noexcept { return GMalloc; }

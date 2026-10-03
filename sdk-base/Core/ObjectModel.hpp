@@ -65,14 +65,6 @@ public:
     [[nodiscard]] static UClass* StaticClass();
     [[nodiscard]] static UClass* FindClass(const std::string& classFullName);
     [[nodiscard]] static UFunction* FindFunction(const std::string& functionFullName);
-    [[nodiscard]] static UObject* StaticFindObject(UClass* objectClass, UObject* objectPackage, const wchar_t* objectName,
-        bool exactClass = false);
-    [[nodiscard]] static UObject* StaticFindObjectFast(UClass* objectClass, UObject* objectPackage, FName objectName,
-        bool exactClass = false);
-    [[nodiscard]] static UObject* StaticLoadObject(UClass* objectClass, UObject* outer, const wchar_t* name,
-        const wchar_t* filename = nullptr, std::uint32_t loadFlags = 0, void* sandbox = nullptr);
-    [[nodiscard]] static UObject* DynamicLoadObject(const wchar_t* objectName, UClass* objectClass,
-        bool mayFail = false);
     [[nodiscard]] static UObject* FindObject(const std::string& objectFullName, UClass* requiredClass = nullptr);
     [[nodiscard]] static UObject* FindObject(const char* objectFullName, UClass* requiredClass = nullptr);
     [[nodiscard]] static UObject* FindObjectChecked(const std::string& objectFullName, UClass* requiredClass = nullptr);
@@ -145,8 +137,6 @@ public:
     void ProcessEvent(UFunction* function, void* params, void* result = nullptr);
     void ProcessEventChecked(UFunction* function, void* params, void* result = nullptr);
     void ProcessInternal(FFrame& stack, void* result = nullptr);
-    bool ScriptConsoleExec(const wchar_t* command, void* outputDevice, UObject* executor = nullptr);
-    bool ProcessRemoteFunction(UFunction* function, void* params, void* stack, UObject* subObject = nullptr);
     void ProcessDelegate(FName delegateName, void* params, void* result = nullptr);
     void MarkPendingKill();
     void SetFlags(std::uint64_t flags) noexcept { ObjectFlags |= flags; }

@@ -7,15 +7,6 @@
 
 namespace Kuru::SDK {
 namespace {
-[[nodiscard]] std::wstring Widen(std::string_view value) {
-    std::wstring result;
-    result.reserve(value.size());
-    for (char ch : value) {
-        result.push_back(static_cast<unsigned char>(ch));
-    }
-    return result;
-}
-
 [[nodiscard]] UClass* FindClassByName(const char* fullName) {
     return UObject::FindClass(fullName);
 }
@@ -80,43 +71,8 @@ UFunction* UObject::FindFunction(const std::string& functionFullName) {
     return reinterpret_cast<UFunction*>(FindObject(functionFullName, UFunction::StaticClass()));
 }
 
-UObject* UObject::StaticFindObject(UClass* objectClass, UObject* objectPackage, const wchar_t* objectName, bool exactClass) {
-    if (auto* fn = GetStaticFindObject()) {
-        return fn(objectClass, objectPackage, objectName, exactClass);
-    }
-    return nullptr;
-}
-
-UObject* UObject::StaticFindObjectFast(UClass* objectClass, UObject* objectPackage, FName objectName, bool exactClass) {
-    if (auto* fn = GetStaticFindObjectFast()) {
-        return fn(objectClass, objectPackage, objectName, exactClass);
-    }
-    (void)objectClass;
-    (void)objectPackage;
-    (void)objectName;
-    (void)exactClass;
-    return nullptr;
-}
-
-UObject* UObject::StaticLoadObject(UClass* objectClass, UObject* outer, const wchar_t* name, const wchar_t* filename,
-    std::uint32_t loadFlags, void* sandbox) {
-    if (auto* fn = GetStaticLoadObject()) {
-        return fn(objectClass, outer, name, filename, loadFlags, sandbox);
-    }
-    return nullptr;
-}
-
-UObject* UObject::DynamicLoadObject(const wchar_t* objectName, UClass* objectClass, bool mayFail) {
-    if (auto* fn = GetDynamicLoadObject()) {
-        return fn(objectName, objectClass, mayFail);
-    }
-    return nullptr;
-}
-
 UObject* UObject::FindObject(const std::string& objectFullName, UClass* requiredClass) {
-    if (auto* found = StaticFindObject(requiredClass, nullptr, Widen(objectFullName).c_str(), false)) {
-        return found;
-    }
+    // Native StaticFindObject isn't resolved, find by scanning GObjects
     auto* objects = GetGlobalObjects();
     if (!objects) {
         return nullptr;
@@ -254,20 +210,6 @@ void UObject::ProcessInternal(FFrame& stack, void* result) {
     if (auto* fn = GetProcessInternal()) {
         fn(this, stack, result);
     }
-}
-
-bool UObject::ScriptConsoleExec(const wchar_t* command, void* outputDevice, UObject* executor) {
-    if (auto* fn = GetScriptConsoleExec()) {
-        return fn(this, command, outputDevice, executor);
-    }
-    return false;
-}
-
-bool UObject::ProcessRemoteFunction(UFunction* function, void* params, void* stack, UObject* subObject) {
-    if (auto* fn = GetProcessRemoteFunction()) {
-        return fn(this, function, params, stack, subObject);
-    }
-    return false;
 }
 
 void UObject::ProcessDelegate(FName delegateName, void* params, void* result) {
