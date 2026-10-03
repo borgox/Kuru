@@ -6,32 +6,22 @@ of the engine, and what's here comes from reverse-engineering it directly.
 
 ## FScriptDelegate
 
-A single-cast delegate is an `FScriptDelegate`. In stock UE3 it's two fields - the object to call and the name
-of the function on it - 16 bytes:
+A single-cast delegate is an `FScriptDelegate`: the object to call and the name of the function on it, 16
+bytes, exactly as in stock UE3:
 
 ```
 0x00  Object          UObject* to call the function on
 0x08  FunctionName    FName of the function
 ```
 
-In the Rocket League fork it's **24 bytes**: there's an extra 8-byte field at offset `0x10`.
+## Delegate properties: FMultiScriptDelegate
 
-## The field at 0x10
-
-That extra field is a **native binding**. When Psyonix binds a delegate to C++ code rather than to an
-UnrealScript function, they store the C++ callback there - and clear `Object` and `FunctionName`, because the
-two representations are mutually exclusive. A delegate is bound *either* the script way (object + function
-name) *or* the native way (the pointer at `0x10`).
-
-In practice most of the engine's event delegates (`__Event*__Delegate`) are wired to native handlers, so on a
-live game the vast majority have `Object`/`FunctionName` null and the `0x10` pointer set. That's exactly what
-the Objects tab shows if you inspect a delegate property, and it's how the field's meaning was recovered.
-
-## Multicast delegates
-
-A multicast delegate (`FMulticastScriptDelegate`) is a `TArray` of `FScriptDelegate` - an invocation list.
-Calling it invokes every entry. It's the "many listeners" form; a single-cast delegate is the "one listener"
-form.
+A delegate *property* on a Rocket League object isn't a bare `FScriptDelegate` - it's **24 bytes**. The
+first 16 are an inline single binding (object + function name); the extra 8-byte field at `0x10` is a
+pointer to a `TArray<FScriptDelegate>` - the multicast invocation list. The engine allocates that array
+only when more than one handler is bound, so with zero or one handler the pointer is null and the inline
+binding is used. This is the type Kuru calls `FMultiScriptDelegate`, and it's why delegate fields on a
+class are spaced `0x18` apart.
 
 ## The two dispatch layers
 

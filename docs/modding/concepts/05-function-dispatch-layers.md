@@ -16,16 +16,17 @@ function:
 | `CallFunction` | vtable 76 | bytecode call dispatch - where script *calls* a function | inline in bytecode |
 | `ProcessDelegate` | vtable 68 | delegate dispatch (fork: `UFunction` in arg1) | flat blob |
 | `CallDelegate` | vtable 69 | one bound delegate target | flat blob |
-| `ProcessRemoteFunction` | vtable 71 | net-vs-local check on nearly every call | flat blob |
 
-(`ProcessState`, vtable 70, isn't safely hookable, so Kuru leaves it alone.)
+(`ProcessState`, vtable 70, isn't safely hookable, so Kuru leaves it alone. `ProcessRemoteFunction`,
+vtable 71, is always reached *through* `ProcessEvent`/`ProcessInternal`/`CallFunction`, so hooking those
+already covers it, Kuru doesn't hook it separately.)
 
 ## The same call, several layers
 
 The layers aren't alternatives - one call can pass through more than one. When script calls a normal script
 function, it reaches `CallFunction`, which sets up a frame and hands off to `ProcessInternal` to run the body.
 When C++ raises an event, it goes through `ProcessEvent`, which for a script function also ends at
-`ProcessInternal`. `ProcessRemoteFunction` runs on top of nearly everything, to decide local-vs-networked.
+`ProcessInternal`.
 
 So if Kuru naively hooked every layer, one call could fire your hook two or three times - and at some of those
 layers the parameters wouldn't exist yet (a native at `CallFunction` hasn't materialised its args; see
