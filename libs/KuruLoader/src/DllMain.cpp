@@ -207,6 +207,24 @@ bool ProbeInterpreterGlobals(void* handler, Kuru::SDK::UObject* probeObj, Kuru::
  * targets, and probe it with a known property+object to disambiguate. GRuntimeUCFlags is the
  * `and dword [rip], ~RUC` store in CallFunction. Returns true if at least GPropAddr resolved.
  */
+Kuru::SDK::UProperty* FindProbeProperty() {
+    Kuru::SDK::UClass* propClass = Kuru::SDK::UProperty::StaticClass();
+    auto* objects = Kuru::SDK::UObject::GetGlobalObjects();
+    if (!propClass || !objects) {
+        return nullptr;
+    }
+    for (Kuru::SDK::UObject* o : *objects) {
+        if (!o || !o->IsA(propClass)) {
+            continue;
+        }
+        auto* p = reinterpret_cast<Kuru::SDK::UProperty*>(o);
+        if (p->Offset > 0) {
+            return p;
+        }
+    }
+    return nullptr;
+}
+
 bool ResolveInterpreterGlobals(void* gnatives, void* callFunctionAddr, void*& outProp, void*& outAddr,
                                void*& outObj, void*& outFlags) {
     outProp = outAddr = outObj = outFlags = nullptr;
@@ -219,21 +237,8 @@ bool ResolveInterpreterGlobals(void* gnatives, void* callFunctionAddr, void*& ou
     const std::uintptr_t hi = base + size;
 
     // A probe property + a valid object (the property's address in it is only COMPUTED, never read).
-    Kuru::SDK::UProperty* probeProp = nullptr;
+    Kuru::SDK::UProperty* probeProp = FindProbeProperty();
     auto* probeObj = reinterpret_cast<Kuru::SDK::UObject*>(Kuru::SDK::UObject::StaticClass());
-    if (Kuru::SDK::UClass* propClass = Kuru::SDK::UProperty::StaticClass()) {
-        if (auto* objects = Kuru::SDK::UObject::GetGlobalObjects()) {
-            for (Kuru::SDK::UObject* o : *objects) {
-                if (o && o->IsA(propClass)) {
-                    auto* p = reinterpret_cast<Kuru::SDK::UProperty*>(o);
-                    if (p->Offset > 0) {  // non-zero so GPropAddr (obj+Offset) != GPropObject (obj), no collision
-                        probeProp = p;
-                        break;
-                    }
-                }
-            }
-        }
-    }
     if (!probeProp || !probeObj) {
         return false;
     }
