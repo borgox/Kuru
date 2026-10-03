@@ -51,15 +51,15 @@ bool IsObjectAlive(Kuru::SDK::UObject* object) {
         return false;
     }
     auto* objects = Kuru::SDK::GetGlobalObjects();
-    if (!objects) {
+    if (!objects || !objects->Data) {
         return false;
     }
-    for (Kuru::SDK::UObject* candidate : *objects) {
-        if (candidate == object) {
-            return true;
-        }
+    __try {
+        const std::int32_t index = object->GetIndex();
+        return index >= 0 && index < objects->Count && objects->Data[index] == object;
+    } __except (1 /* EXCEPTION_EXECUTE_HANDLER */) {
+        return false;
     }
-    return false;
 }
 
 // The parameter properties of a function, in declaration order.

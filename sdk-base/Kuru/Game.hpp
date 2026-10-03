@@ -32,19 +32,21 @@ inline Kuru::SDK::UEngine* GetEngine() {
     return cached;
 }
 
-// Is this object still live (present in GObjects)? O(n): for validating a cached pointer.
+// Is this object still live? O(1)
 inline bool IsValid(Kuru::SDK::UObject* object) {
     if (!object) {
         return false;
     }
-    if (auto* objects = Kuru::SDK::GetGlobalObjects()) {
-        for (Kuru::SDK::UObject* candidate : *objects) {
-            if (candidate == object) {
-                return true;
-            }
-        }
+    auto* objects = Kuru::SDK::GetGlobalObjects();
+    if (!objects || !objects->Data) {
+        return false;
     }
-    return false;
+    __try {
+        const std::int32_t index = object->GetIndex();
+        return index >= 0 && index < objects->Count && objects->Data[index] == object;
+    } __except (1 /* EXCEPTION_EXECUTE_HANDLER */) {
+        return false;  // the pointer was dangling and the read faulted
+    }
 }
 
 // --- Local player ---
