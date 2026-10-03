@@ -2,6 +2,7 @@
 
 #include <Kuru/Api.hpp>
 
+#include <cstdint>
 #include <vector>
 
 /* Kuru::Game convenience finders that hand you the typed SDK objects.
@@ -10,20 +11,23 @@
  */
 namespace Kuru::Game {
 
-// The one game engine, found once and cached (it lives the whole session).
+// The one game engine, found once and cached (it lives the whole session). Engine.Engine.GetEngine is a native static function that simply returns GEngine, so we call its Func pointer directly
 inline Kuru::SDK::UEngine* GetEngine() {
     static Kuru::SDK::UEngine* cached = nullptr;
     if (cached) {
         return cached;
     }
-    Kuru::SDK::UClass* cls = Kuru::SDK::UGameEngine::StaticClass();
-    if (auto* objects = Kuru::SDK::GetGlobalObjects()) {
-        for (Kuru::SDK::UObject* object : *objects) {
-            if (object && cls && object->IsA(cls) && !object->IsTemplate()) {
-                cached = reinterpret_cast<Kuru::SDK::UEngine*>(object);
-                break;
-            }
-        }
+    Kuru::SDK::UFunction* fn = Kuru::SDK::UObject::FindFunction("Engine.Engine.GetEngine");
+    if (fn && fn->Func) {
+        std::uint8_t endParms[8] = {};  // no input params, the native just finalizes and returns GEngine
+        Kuru::SDK::FFrame frame{};
+        frame.Node = reinterpret_cast<Kuru::SDK::UStruct*>(fn);
+        frame.Object = fn;  // context (ignored by a static getter, but matches the call)
+        frame.Code = endParms;
+        Kuru::SDK::UEngine* result = nullptr;
+        using GetEngineExec = void(__fastcall*)(Kuru::SDK::UObject*, Kuru::SDK::FFrame&, void*);
+        reinterpret_cast<GetEngineExec>(fn->Func)(fn, frame, &result);
+        cached = result;
     }
     return cached;
 }
