@@ -27,10 +27,11 @@ struct FPropertyTag {
     void Serialize(FArchive& archive);
 };
 
+// Rocket League  widened the chunk file offsets to 64-bit, the sizes stay 32-bit. Stock UE3 used 32-bit for all four. Reference: emii's UModel fork FCompressedChunk.
 struct FCompressedChunk {
-    std::int32_t UncompressedOffset = 0;
+    std::int64_t UncompressedOffset = 0;
     std::int32_t UncompressedSize = 0;
-    std::int32_t CompressedOffset = 0;
+    std::int64_t CompressedOffset = 0;
     std::int32_t CompressedSize = 0;
 
     [[nodiscard]] bool IsValid() const noexcept {
