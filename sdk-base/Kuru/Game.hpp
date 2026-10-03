@@ -20,13 +20,12 @@ inline Kuru::SDK::UEngine* GetEngine() {
     Kuru::SDK::UFunction* fn = Kuru::SDK::UObject::FindFunction("Engine.Engine.GetEngine");
     if (fn && fn->Func) {
         std::uint8_t endParms[8] = {};  // no input params, the native just finalizes and returns GEngine
-        Kuru::SDK::FFrame frame{};
-        frame.Node = reinterpret_cast<Kuru::SDK::UStruct*>(fn);
-        frame.Object = fn;  // context (ignored by a static getter, but matches the call)
-        frame.Code = endParms;
+        Kuru::SDK::FStateFrame frame{};
+        frame.Frame.Node = reinterpret_cast<Kuru::SDK::UStruct*>(fn);
+        frame.Frame.Object = fn;  // context (ignored by a static getter, but matches the call)
+        frame.Frame.Code = endParms;
         Kuru::SDK::UEngine* result = nullptr;
-        using GetEngineExec = void(__fastcall*)(Kuru::SDK::UObject*, Kuru::SDK::FFrame&, void*);
-        reinterpret_cast<GetEngineExec>(fn->Func)(fn, frame, &result);
+        fn->Func(fn, frame, &result);
         cached = result;
     }
     return cached;
