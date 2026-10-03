@@ -5,12 +5,13 @@
 #include "ModRegistry.hpp"
 #include "Reflector.hpp"
 #include "Scanner.hpp"
+#include "Storage.hpp"
 #include "ThreadBridge.hpp"
 #include "Variables.hpp"
 
 #include <Kuru/Mod.hpp>
 
-#include <MinHook.h>
+#include "Hook.hpp"
 #include <d3d11.h>
 #include <dxgi.h>
 #include <windows.h>
@@ -19,8 +20,11 @@
 #include <backends/imgui_impl_dx11.h>
 #include <backends/imgui_impl_win32.h>
 
-#include <cstdlib>
+#include <atomic>
+#include <filesystem>
+#include <mutex>
 #include <string>
+#include <vector>
 
 // Provided by imgui_impl_win32.cpp.
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -42,24 +46,57 @@ WNDPROC gOriginalWndProc = nullptr;
 
 void* gPresentTarget = nullptr;
 void* gResizeTarget = nullptr;
+Kuru::THook gPresentHook;
+Kuru::THook gResizeHook;
 
 ID3D11Device* gDevice = nullptr;
 ID3D11DeviceContext* gContext = nullptr;
 ID3D11RenderTargetView* gRenderTarget = nullptr;
 HWND gWindow = nullptr;
 
-bool gInitialized = false;
-bool gMenuOpen = false;
-bool gConsoleOpen = false;
+std::atomic<bool> gInitialized{false};  // flipped true (release) only once the overlay is fully built
+std::atomic<bool> gMenuOpen{false};     // toggled from the window thread (WndProc), read on the game thread
+std::atomic<bool> gConsoleOpen{false};
 std::function<void()> gModRenderer;
 std::string gIniPath;
+
+// The game thread builds the ImGui frame and hands the finished draw data to the render thread through this double buffer.
+struct DrawListCopy {
+    ImVector<ImDrawCmd> Cmd;
+    ImVector<ImDrawIdx> Idx;
+    ImVector<ImDrawVert> Vtx;
+    ImDrawListFlags Flags = 0;
+};
+struct FrameSnapshot {
+    bool Valid = false;
+    ImVec2 DisplayPos{};
+    ImVec2 DisplaySize{};
+    ImVec2 FramebufferScale{1.0f, 1.0f};
+    int TotalVtx = 0;
+    int TotalIdx = 0;
+    ImVector<ImTextureData*>* Textures = nullptr;  // points at the context's platform texture list
+    std::vector<DrawListCopy> Lists;
+};
+
+std::mutex gSnapshotMutex;
+FrameSnapshot gSnapshotFront;             // guarded by gSnapshotMutex: the latest frame for the render thread
+FrameSnapshot gSnapshotBuild;             // window-thread scratch, swapped into the front once built
+std::vector<ImDrawList*> gPresentLists;   // render-thread pool of draw lists that carry the snapshot buffers
+
+// The frame is built on the window thread
+constexpr UINT WM_KURU_BUILD = WM_APP + 0x4B55;  // 'KU'
+std::atomic<bool> gBuildPending{false};
+
+void BuildOverlayFrame();  // defined below; runs on the window thread
 
 // The Kuru look: modern font, rounded translucent dark windows, rose-red accent.
 void ApplyKuruStyle() {
     ImGuiIO& io = ImGui::GetIO();
-    const char* fontPath = "C:\\Windows\\Fonts\\segoeui.ttf";
-    if (GetFileAttributesA(fontPath) != INVALID_FILE_ATTRIBUTES) {
-        io.Fonts->AddFontFromFileTTF(fontPath, 17.0f);
+    const std::filesystem::path fontPath =
+        std::filesystem::path(L"C:\\Windows\\Fonts") / "segoeui.ttf";
+    std::error_code ec;
+    if (std::filesystem::exists(fontPath, ec)) {
+        io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 17.0f);
     }
 
     ImGuiStyle& s = ImGui::GetStyle();
@@ -122,20 +159,83 @@ void CreateRenderTarget(IDXGISwapChain* swapChain) {
     }
 }
 
+// Structural/window-management messages that are not input and must always reach the game untouched.
+bool IsMessageCritical(UINT msg) {
+    switch (msg) {
+    case WM_DESTROY:
+    case WM_NCDESTROY:
+    case WM_CLOSE:
+    case WM_QUIT:
+    case WM_ACTIVATE:
+    case WM_ACTIVATEAPP:
+    case WM_NCACTIVATE:
+    case WM_SIZE:
+    case WM_SIZING:
+    case WM_MOVE:
+    case WM_MOVING:
+    case WM_WINDOWPOSCHANGED:
+    case WM_WINDOWPOSCHANGING:
+    case WM_DISPLAYCHANGE:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsMouseInput(UINT msg) {
+    return msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST;
+}
+
+bool IsKeyboardInput(UINT msg) {
+    return msg >= WM_KEYFIRST && msg <= WM_KEYLAST;
+}
+
 LRESULT __stdcall DetourWndProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam) {
-    // Always let ImGui observe messages so its input/focus state stays consistent
-    if (gInitialized) {
-        ImGui_ImplWin32_WndProcHandler(window, msg, wParam, lParam);
-        if (gMenuOpen || gConsoleOpen) {
-            const ImGuiIO& io = ImGui::GetIO();
-            // Only ever swallow actual mouse/keyboard input the UI is using
-            const bool isMouse = (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST);
-            const bool isKeyboard = (msg >= WM_KEYFIRST && msg <= WM_KEYLAST);
-            if ((isMouse && io.WantCaptureMouse) || (isKeyboard && io.WantCaptureKeyboard)) {
-                return true;
-            }
+    // Our own frame-build request, posted by the Present detour.
+    if (msg == WM_KURU_BUILD) {
+        gBuildPending.store(false, std::memory_order_relaxed);
+        BuildOverlayFrame();
+        return 0;
+    }
+    // Non-input/structural messages, and anything before the overlay is ready, go straight to the game.
+    if (IsMessageCritical(msg) || !gInitialized.load(std::memory_order_acquire)) {
+        return CallWindowProcW(gOriginalWndProc, window, msg, wParam, lParam);
+    }
+
+    const bool uiOpen = gMenuOpen.load(std::memory_order_relaxed) ||
+                        gConsoleOpen.load(std::memory_order_relaxed);
+
+    // Let ImGui set the cursor (show the arrow) while a Kuru window is open
+    if (msg == WM_SETCURSOR) {
+        if (uiOpen) {
+            return ImGui_ImplWin32_WndProcHandler(window, msg, wParam, lParam);
+        }
+        return CallWindowProcW(gOriginalWndProc, window, msg, wParam, lParam);
+    }
+
+    ImGui_ImplWin32_WndProcHandler(window, msg, wParam, lParam);
+
+    // F2/F3 toggle the menu/console. Bit 30 of lParam filters out auto-repeat. Consume them.
+    if (msg == WM_KEYDOWN && (HIWORD(lParam) & KF_REPEAT) == 0) {
+        if (wParam == VK_F2) {
+            gMenuOpen.store(!gMenuOpen.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            return 0;
+        }
+        if (wParam == VK_F3) {
+            gConsoleOpen.store(!gConsoleOpen.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            return 0;
         }
     }
+
+    // Keep from the game only the input ImGui is actually using
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureMouse && IsMouseInput(msg)) {
+        return DefWindowProcW(window, msg, wParam, lParam);
+    }
+    if (io.WantCaptureKeyboard && IsKeyboardInput(msg)) {
+        return DefWindowProcW(window, msg, wParam, lParam);
+    }
+
     return CallWindowProcW(gOriginalWndProc, window, msg, wParam, lParam);
 }
 
@@ -153,14 +253,8 @@ void InitializeOverlay(IDXGISwapChain* swapChain) {
 
     ImGui::CreateContext();
     // Persist window positions/sizes across sessions in %APPDATA%\Kuru\imgui.ini
-    if (const char* appData = std::getenv("APPDATA")) {
-        const std::string dir = std::string(appData) + "\\Kuru";
-        CreateDirectoryA(dir.c_str(), nullptr);
-        gIniPath = dir + "\\imgui.ini";
-        ImGui::GetIO().IniFilename = gIniPath.c_str();
-    } else {
-        ImGui::GetIO().IniFilename = nullptr;
-    }
+    gIniPath = (Kuru::Storage::KuruDir() / "imgui.ini").string();
+    ImGui::GetIO().IniFilename = gIniPath.empty() ? nullptr : gIniPath.c_str();
     ImGui::StyleColorsDark();
     ApplyKuruStyle();  // Kuru font + rose-red theme; every mod window inherits it
     ImGui_ImplWin32_Init(gWindow);
@@ -169,31 +263,41 @@ void InitializeOverlay(IDXGISwapChain* swapChain) {
     gOriginalWndProc = reinterpret_cast<WNDPROC>(
         SetWindowLongPtrW(gWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&DetourWndProc)));
 
-    gInitialized = true;
+    gInitialized.store(true, std::memory_order_release);
     Log("overlay initialized (press F2 to toggle the Kuru menu)");
 }
 
-void RenderOverlay() {
-    if (!gRenderTarget) {
+// Deep-copy the finished draw data into the build buffer, then swap it in as the new front snapshot.
+void CaptureDrawData(ImDrawData* dd) {
+    if (!dd) {
         return;
     }
-
-    // Toggle via async key state
-    // F2 = main menu, F3 = console.
-    static bool wasF2 = false;
-    const bool f2 = (GetAsyncKeyState(VK_F2) & 0x8000) != 0;
-    if (f2 && !wasF2) {
-        gMenuOpen = !gMenuOpen;
+    FrameSnapshot& s = gSnapshotBuild;
+    s.Valid = dd->Valid && dd->CmdLists.Size > 0;
+    s.DisplayPos = dd->DisplayPos;
+    s.DisplaySize = dd->DisplaySize;
+    s.FramebufferScale = dd->FramebufferScale;
+    s.TotalVtx = dd->TotalVtxCount;
+    s.TotalIdx = dd->TotalIdxCount;
+    s.Textures = dd->Textures;  // pointer into the context
+    const int listCount = dd->CmdLists.Size;
+    s.Lists.resize(static_cast<std::size_t>(listCount));
+    for (int i = 0; i < listCount; ++i) {
+        const ImDrawList* src = dd->CmdLists[i];
+        s.Lists[i].Cmd = src->CmdBuffer;  // ImVector::operator= reuses the existing capacity
+        s.Lists[i].Idx = src->IdxBuffer;
+        s.Lists[i].Vtx = src->VtxBuffer;
+        s.Lists[i].Flags = src->Flags;
     }
-    wasF2 = f2;
+    std::scoped_lock lock(gSnapshotMutex);
+    std::swap(gSnapshotFront, gSnapshotBuild);
+}
 
-    static bool wasF3 = false;
-    const bool f3 = (GetAsyncKeyState(VK_F3) & 0x8000) != 0;
-    if (f3 && !wasF3) {
-        gConsoleOpen = !gConsoleOpen;
+// Builds the entire ImGui frame on the game thread. Registered as the ThreadBridge per-frame builder.
+void BuildOverlayFrame() {
+    if (!gInitialized.load(std::memory_order_acquire)) {
+        return;
     }
-    wasF3 = f3;
-
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
@@ -209,10 +313,11 @@ void RenderOverlay() {
     ImGui::TextDisabled("F2 menu  |  F3 console");
     ImGui::End();
 
-    if (gMenuOpen) {
+    bool menuOpen = gMenuOpen.load(std::memory_order_relaxed);
+    if (menuOpen) {
         ImGui::SetNextWindowPos(ImVec2(60, 60), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(520, 360), ImGuiCond_FirstUseEver);
-        ImGui::Begin("Kuru", &gMenuOpen);
+        ImGui::Begin("Kuru", &menuOpen);
         if (ImGui::BeginTabBar("kuru_tabs")) {
             if (ImGui::BeginTabItem("Mods")) {
                 auto& mods = Kuru::ModRegistry::Entries();
@@ -262,10 +367,13 @@ void RenderOverlay() {
         }
         ImGui::End();
     }
+    gMenuOpen.store(menuOpen, std::memory_order_relaxed);  // the window's close box can clear it
 
-    if (gConsoleOpen) {
-        Kuru::Console::Draw(&gConsoleOpen);
+    bool consoleOpen = gConsoleOpen.load(std::memory_order_relaxed);
+    if (consoleOpen) {
+        Kuru::Console::Draw(&consoleOpen);
     }
+    gConsoleOpen.store(consoleOpen, std::memory_order_relaxed);
 
     // Let mods draw into the same frame/context. Isolate so a throwing mod can't break the frame.
     if (gModRenderer) {
@@ -276,20 +384,66 @@ void RenderOverlay() {
     }
 
     ImGui::Render();
+    CaptureDrawData(ImGui::GetDrawData());
+}
+
+// Presents the latest snapshot. Runs on the render thread, which only uploads and draws, never builds.
+void RenderSnapshot() {
+    if (!gRenderTarget) {
+        return;
+    }
+    std::scoped_lock lock(gSnapshotMutex);
+    FrameSnapshot& s = gSnapshotFront;
+    if (!s.Valid || s.Lists.empty()) {
+        return;
+    }
+    while (gPresentLists.size() < s.Lists.size()) {
+        gPresentLists.push_back(IM_NEW(ImDrawList)(ImGui::GetDrawListSharedData()));
+    }
+
+    const int listCount = static_cast<int>(s.Lists.size());
+    ImDrawData drawData;
+    drawData.Valid = true;
+    drawData.DisplayPos = s.DisplayPos;
+    drawData.DisplaySize = s.DisplaySize;
+    drawData.FramebufferScale = s.FramebufferScale;
+    drawData.TotalVtxCount = s.TotalVtx;
+    drawData.TotalIdxCount = s.TotalIdx;
+    drawData.Textures = s.Textures;
+    // Lend the snapshot's buffers to the pooled draw lists, render, then take them back.
+    for (int i = 0; i < listCount; ++i) {
+        ImDrawList* list = gPresentLists[i];
+        list->CmdBuffer.swap(s.Lists[i].Cmd);
+        list->IdxBuffer.swap(s.Lists[i].Idx);
+        list->VtxBuffer.swap(s.Lists[i].Vtx);
+        list->Flags = s.Lists[i].Flags;
+        drawData.CmdLists.push_back(list);
+    }
+
     gContext->OMSetRenderTargets(1, &gRenderTarget, nullptr);
-    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    ImGui_ImplDX11_RenderDrawData(&drawData);
+
+    for (int i = 0; i < listCount; ++i) {
+        gPresentLists[i]->CmdBuffer.swap(s.Lists[i].Cmd);
+        gPresentLists[i]->IdxBuffer.swap(s.Lists[i].Idx);
+        gPresentLists[i]->VtxBuffer.swap(s.Lists[i].Vtx);
+    }
 }
 
 HRESULT __stdcall DetourPresent(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags) {
     Kuru::ThreadBridge::NotifyPresent();  // drives the game-thread tick (consumed in the PE detour)
-    if (!gInitialized) {
+    if (!gInitialized.load(std::memory_order_acquire)) {
         InitializeOverlay(swapChain);
     }
-    if (gInitialized) {
+    if (gInitialized.load(std::memory_order_acquire)) {
         if (!gRenderTarget) {
             CreateRenderTarget(swapChain);
         }
-        RenderOverlay();
+        // Ask the window thread to build the next frame, then present the latest finished one.
+        if (gWindow && !gBuildPending.exchange(true, std::memory_order_relaxed)) {
+            PostMessageW(gWindow, WM_KURU_BUILD, 0, 0);
+        }
+        RenderSnapshot();  // render thread only presents, the window thread builds
     }
     return gOriginalPresent(swapChain, syncInterval, flags);
 }
@@ -357,18 +511,13 @@ bool Install() {
         Log("GUI install failed: could not resolve swapchain vtable");
         return false;
     }
-    MH_Initialize();
-    if (MH_CreateHook(gPresentTarget, reinterpret_cast<void*>(&DetourPresent),
-                      reinterpret_cast<void**>(&gOriginalPresent)) != MH_OK ||
-        MH_EnableHook(gPresentTarget) != MH_OK) {
+    if (!gPresentHook.Install(gPresentTarget, reinterpret_cast<void*>(&DetourPresent),
+                              reinterpret_cast<void**>(&gOriginalPresent))) {
         Log("GUI install failed: Present hook");
         return false;
     }
-    if (gResizeTarget) {
-        MH_CreateHook(gResizeTarget, reinterpret_cast<void*>(&DetourResizeBuffers),
-                      reinterpret_cast<void**>(&gOriginalResizeBuffers));
-        MH_EnableHook(gResizeTarget);
-    }
+    (void)gResizeHook.Install(gResizeTarget, reinterpret_cast<void*>(&DetourResizeBuffers),
+                              reinterpret_cast<void**>(&gOriginalResizeBuffers));  // optional, ok if null
     Log("GUI installed");
     return true;
 }
@@ -387,19 +536,26 @@ void HostGetImGuiAllocators(void** allocFn, void** freeFn, void** userData) {
 }
 
 void Shutdown() {
-    if (gPresentTarget) {
-        MH_DisableHook(gPresentTarget);
-    }
-    if (gResizeTarget) {
-        MH_DisableHook(gResizeTarget);
-    }
-    if (gInitialized) {
+    // Clearing this makes BuildOverlayFrame  early-return, so no new frames are built.
+    const bool wasInitialized = gInitialized.exchange(false, std::memory_order_acq_rel);
+    gPresentHook.Remove();
+    gResizeHook.Remove();
+    if (wasInitialized) {
         if (gWindow && gOriginalWndProc) {
             SetWindowLongPtrW(gWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(gOriginalWndProc));
         }
         ImGui_ImplDX11_Shutdown();
         ImGui_ImplWin32_Shutdown();
         ImGui::DestroyContext();
+    }
+    {
+        std::scoped_lock lock(gSnapshotMutex);
+        for (ImDrawList* list : gPresentLists) {
+            IM_DELETE(list);
+        }
+        gPresentLists.clear();
+        gSnapshotFront = FrameSnapshot{};
+        gSnapshotBuild = FrameSnapshot{};
     }
     if (gRenderTarget) gRenderTarget->Release();
     if (gContext) gContext->Release();
