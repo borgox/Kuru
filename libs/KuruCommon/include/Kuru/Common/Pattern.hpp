@@ -9,6 +9,10 @@
 
 namespace Kuru::Common {
 
+// The Rocket League GNames byte pattern, shared so the loader and the SDK generator don't each carry
+// their own copy (GObjects follows at GNames + 0x48).
+inline constexpr std::string_view GNamesPattern = "?? ?? ?? ?? ?? ?? 00 00 ?? ?? ?? ?? 35 25 02 00";
+
 struct PatternByte {
     std::uint8_t value = 0;
     bool wildcard = false;

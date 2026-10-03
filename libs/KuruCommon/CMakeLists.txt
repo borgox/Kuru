@@ -8,6 +8,7 @@ add_library(KuruCommon STATIC
 target_include_directories(KuruCommon
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/sdk-base   # for Core/Containers.hpp (TArray), shared with the SDK
 )
 
 target_compile_features(KuruCommon PUBLIC cxx_std_20)

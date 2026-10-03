@@ -23,8 +23,7 @@
 
 namespace {
 
-// Proven by Kuru-dump for the current tracked RL build family.
-constexpr const char* GNamesPattern = "?? ?? ?? ?? ?? ?? 00 00 ?? ?? ?? ?? 35 25 02 00";
+// Proven by Kuru-dump for the current tracked RL build family. GNamesPattern is shared (Kuru::Common).
 constexpr const char* GMallocPattern = "48 89 0D ?? ?? ?? ?? 48 8B 01 FF 50 60";
 constexpr const char* GPsyonixBuildIDPattern = "4C 8B 0D ?? ?? ?? ?? 4C 8D 05 ?? ?? ?? ?? BA F8 02 00 00";
 constexpr const char* BuildDatePattern = "48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B 3D ?? ?? ?? ?? 48 85 FF 74";
@@ -740,7 +739,7 @@ DWORD WINAPI MainThread(LPVOID parameter) {
     Log("Output directory: " + gOutputDirectory);
     Log("Injected, scanning for GNames using known-good Kuru-dump pattern");
 
-    const auto match = Kuru::Common::FindPatternInCurrentModule(GNamesPattern);
+    const auto match = Kuru::Common::FindPatternInCurrentModule(Kuru::Common::GNamesPattern);
     if (!match.has_value()) {
         return FailMainThread("GNames pattern not found");
     }

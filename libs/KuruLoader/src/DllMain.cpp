@@ -322,10 +322,7 @@ std::filesystem::path SelfDirectory() {
 
 // Resolve RL globals and publish them to the SDK. Returns false if the game memory could not be validated
 bool BootstrapGlobals() {
-    // GNames pattern
-    constexpr std::string_view GNamesPattern = "?? ?? ?? ?? ?? ?? 00 00 ?? ?? ?? ?? 35 25 02 00";
-
-    const auto globals = Kuru::Common::TryInitializeRocketLeagueGlobalsFromPattern(GNamesPattern);
+    const auto globals = Kuru::Common::TryInitializeRocketLeagueGlobalsFromPattern(Kuru::Common::GNamesPattern);
     if (!globals.has_value() || globals->GNames == nullptr || globals->GObjects == nullptr) {
         Log("global bootstrap failed: GNames/GObjects not resolved");
         return false;
@@ -530,11 +527,11 @@ void UnloadAllMods() {
     mods.clear();
 }
 
-// The injector may attach before Rocket League's engine has built GNames/GObjects so poll until they exist
+
 bool WaitForGameReady() {
-    constexpr std::string_view GNamesPattern = "?? ?? ?? ?? ?? ?? 00 00 ?? ?? ?? ?? 35 25 02 00";
-    for (int attempt = 0; attempt < 1800; ++attempt) {  // up to ~90s at 50ms
-        const auto globals = Kuru::Common::TryInitializeRocketLeagueGlobalsFromPattern(GNamesPattern);
+    for (int attempt = 0; attempt < 200; ++attempt) {  // up to ~10s at 50ms
+        const auto globals =
+            Kuru::Common::TryInitializeRocketLeagueGlobalsFromPattern(Kuru::Common::GNamesPattern);
         if (globals.has_value() && globals->GObjects && globals->GObjects->Data &&
             globals->GObjects->Count > 0) {
             return true;
@@ -546,7 +543,7 @@ bool WaitForGameReady() {
 
 DWORD WINAPI HostThread(LPVOID) {
     if (!WaitForGameReady()) {
-        Log("HostThread: game globals never became ready (waited ~90s); aborting");
+        Log("HostThread: game globals not ready (waited ~10s), inject at the menu and retry");
         return 1;
     }
     if (!BootstrapGlobals()) {
@@ -600,6 +597,10 @@ BOOL APIENTRY DllMain(const HMODULE module, const DWORD reason, const LPVOID res
         }
         break;
     case DLL_PROCESS_DETACH:
+        // reserved != nullptr means the process is terminating: other threads are already gone
+        if (reserved != nullptr) {
+            break;
+        }
         Kuru::Gui::Shutdown();
         Kuru::HookEngine::Shutdown();
         UnloadAllMods();
