@@ -667,7 +667,7 @@ public:
     float MapLoadTimePS4;            // 0x0934
     float MapLoadTimeXboxOne;        // 0x0938
     float MapLoadTimeSwitch;         // 0x093C
-    FScriptDelegate EventPreLaunchURL; // 0x0940, reflected as __EventPreLaunchURL__Delegate
+    FMultiScriptDelegate EventPreLaunchURL; // 0x0940, reflected as __EventPreLaunchURL__Delegate
 };
 
 class UGameViewportClient : public UScriptViewportClient {
@@ -703,15 +703,15 @@ public:
     float ProgressFadeTime;          // 0x016C
     TArray<FString> DebugProperties; // 0x0170
     FPointer ScaleformInteraction;   // 0x0180
-    FScriptDelegate HandleInputKey;  // 0x0188, reflected as __HandleInputKey__Delegate
-    FScriptDelegate HandleInputAxis; // 0x01A0, reflected as __HandleInputAxis__Delegate
-    FScriptDelegate HandleInputChar; // 0x01B8, reflected as __HandleInputChar__Delegate
-    FScriptDelegate EventScreenDraggedOnNewScreen; // 0x01D0, reflected as __EventScreenDraggedOnNewScreen__Delegate
-    FScriptDelegate EventScaleformEnabledChanged; // 0x01E8, reflected as __EventScaleformEnabledChanged__Delegate
-    FScriptDelegate EventGamepadInputAPIChanged; // 0x0200, reflected as __EventGamepadInputAPIChanged__Delegate
-    FScriptDelegate EventGamepadConnectionStatusChanged; // 0x0218, reflected as __EventGamepadConnectionStatusChanged__Delegate
-    FScriptDelegate EventGampadConnected; // 0x0230, reflected as __EventGampadConnected__Delegate; RL spelling
-    FScriptDelegate EventGampadDisconnected; // 0x0248, reflected as __EventGampadDisconnected__Delegate; RL spelling
+    FMultiScriptDelegate HandleInputKey;  // 0x0188, reflected as __HandleInputKey__Delegate
+    FMultiScriptDelegate HandleInputAxis; // 0x01A0, reflected as __HandleInputAxis__Delegate
+    FMultiScriptDelegate HandleInputChar; // 0x01B8, reflected as __HandleInputChar__Delegate
+    FMultiScriptDelegate EventScreenDraggedOnNewScreen; // 0x01D0, reflected as __EventScreenDraggedOnNewScreen__Delegate
+    FMultiScriptDelegate EventScaleformEnabledChanged; // 0x01E8, reflected as __EventScaleformEnabledChanged__Delegate
+    FMultiScriptDelegate EventGamepadInputAPIChanged; // 0x0200, reflected as __EventGamepadInputAPIChanged__Delegate
+    FMultiScriptDelegate EventGamepadConnectionStatusChanged; // 0x0218, reflected as __EventGamepadConnectionStatusChanged__Delegate
+    FMultiScriptDelegate EventGampadConnected; // 0x0230, reflected as __EventGampadConnected__Delegate; RL spelling
+    FMultiScriptDelegate EventGampadDisconnected; // 0x0248, reflected as __EventGampadDisconnected__Delegate; RL spelling
 
     [[nodiscard]] bool HasViewportClientFlag(std::uint32_t mask) const noexcept { return (ViewportClientFlags & mask) != 0; }
     [[nodiscard]] bool bShowTitleSafeZone() const noexcept { return HasViewportClientFlag(0x001u); }
@@ -755,7 +755,7 @@ public:
     TArray<std::uint8_t> PackagesToFullyLoad; // 0x0B18
     TArray<std::uint8_t> NamedNetDrivers; // 0x0B28
     TArray<FName> AnimTags;          // 0x0B38
-    FScriptDelegate EventTravelMapNotFound; // 0x0B48, reflected as __EventTravelMapNotFound__Delegate
+    FMultiScriptDelegate EventTravelMapNotFound; // 0x0B48, reflected as __EventTravelMapNotFound__Delegate
 
     [[nodiscard]] bool HasGameEngineFlag(std::uint32_t mask) const noexcept { return (GameEngineFlags & mask) != 0; }
     [[nodiscard]] bool bWorldWasLoadedThisTick() const noexcept { return HasGameEngineFlag(0x001u); }

@@ -277,7 +277,7 @@ struct DumpModel {
         return prop.PropertyClass.empty() ? "Kuru::SDK::UClass*" : QualifiedReflectedTypeName(prop.PropertyClass, model) + "*";
     }
     if (prop.Kind == "DelegateProperty") {
-        return "Kuru::SDK::FScriptDelegate";
+        return "Kuru::SDK::FMultiScriptDelegate";
     }
     if (prop.Kind == "ArrayProperty") {
         return "Kuru::SDK::TArray<std::uint8_t>";

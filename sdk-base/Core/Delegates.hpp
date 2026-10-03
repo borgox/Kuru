@@ -5,10 +5,10 @@
 
 namespace Kuru::SDK {
 
+// A single delegate binding (UE3 FScriptDelegate): the bound object plus the function name on it, 16 bytes on 64-bit. This is the element a multicast invocation list holds.
 struct FScriptDelegate {
-    UObject* Object = nullptr;
-    FName FunctionName;
-    std::uint8_t RLPad_0010[0x08]{};
+    UObject* Object = nullptr;   // 0x00
+    FName FunctionName;          // 0x08
 
     [[nodiscard]] bool IsBound() const noexcept { return Object != nullptr && !FunctionName.IsNone(); }
     void BindUFunction(UObject* object, FName functionName) noexcept {
@@ -27,29 +27,34 @@ struct FScriptDelegate {
     }
 };
 
-struct FMulticastScriptDelegate {
-    TArray<FScriptDelegate> InvocationList;
+// An inline single binding plus a ointer to a multicast invocation list
+struct FMultiScriptDelegate {
+    FScriptDelegate SingleDelegate;                        // 0x00 (16 bytes)
+    TArray<FScriptDelegate>* MulticastDelegate = nullptr;  // 0x10 - null unless multicast
 
-    [[nodiscard]] std::int32_t Num() const noexcept { return InvocationList.Num(); }
-    [[nodiscard]] bool IsBound() const noexcept { return Num() > 0; }
-    void Add(const FScriptDelegate& delegate) { InvocationList.Add(delegate); }
-    void Remove(const FScriptDelegate& delegate) {
-        for (std::int32_t index = 0; index < InvocationList.Count; ++index) {
-            if (InvocationList[index].Object == delegate.Object && InvocationList[index].FunctionName == delegate.FunctionName) {
-                InvocationList.Remove(index);
-                return;
-            }
-        }
+    [[nodiscard]] bool IsBound() const noexcept {
+        return SingleDelegate.IsBound() || (MulticastDelegate != nullptr && MulticastDelegate->Num() > 0);
     }
-    void Clear() { InvocationList.Empty(); }
+    void BindUFunction(UObject* object, FName functionName) noexcept {
+        SingleDelegate.BindUFunction(object, functionName);
+    }
+    void Clear() noexcept {
+        SingleDelegate.Clear();
+        MulticastDelegate = nullptr;  // the array is engine-owned, just drop our view of it
+    }
+    // Invoke every bound handler: the multicast list when present, otherwise the single binding.
     void Broadcast(void* params, void* result = nullptr) const {
-        for (const FScriptDelegate& delegate : InvocationList) {
-            delegate.ProcessDelegate(params, result);
+        if (MulticastDelegate != nullptr && MulticastDelegate->Num() > 0) {
+            for (const FScriptDelegate& delegate : *MulticastDelegate) {
+                delegate.ProcessDelegate(params, result);
+            }
+        } else {
+            SingleDelegate.ProcessDelegate(params, result);
         }
     }
 };
 
-static_assert(sizeof(FScriptDelegate) == 0x18);
-static_assert(sizeof(FMulticastScriptDelegate) == 0x10);
+static_assert(sizeof(FScriptDelegate) == 0x10);
+static_assert(sizeof(FMultiScriptDelegate) == 0x18);
 
 } // namespace Kuru::SDK
