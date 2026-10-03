@@ -63,7 +63,7 @@ ImVec4 LevelColor(int level) {
 
 void WriteToFile(const LogEntry& entry) {
     static std::ofstream file = [] {
-        const std::string path = Kuru::Storage::KuruDir() + "\\kuru.log";
+        const std::filesystem::path path = Kuru::Storage::KuruDir() / "kuru.log";
         std::error_code ec;
         if (std::filesystem::exists(path) && std::filesystem::file_size(path, ec) > 5 * 1024 * 1024) {
             std::filesystem::remove(path, ec);  // simple rotation: drop the old log if it's large

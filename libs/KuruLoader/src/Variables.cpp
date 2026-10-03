@@ -6,6 +6,7 @@
 
 #include <imgui.h>
 
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <mutex>
@@ -26,8 +27,8 @@ std::map<std::string, CVar> gCVars;          // ordered for stable listing
 std::map<std::string, std::string> gSaved;   // values loaded from disk
 bool gLoaded = false;
 
-std::string ConfigPath() {
-    return Kuru::Storage::KuruDir() + "\\config.cfg";
+std::filesystem::path ConfigPath() {
+    return Kuru::Storage::KuruDir() / "config.cfg";
 }
 
 void LoadLocked() {

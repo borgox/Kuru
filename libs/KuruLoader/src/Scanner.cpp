@@ -1,6 +1,7 @@
 #include "Scanner.hpp"
 
 #include "PropertyView.hpp"
+#include "Storage.hpp"
 
 #include <Core/Globals.hpp>
 #include <Core/ObjectModel.hpp>
@@ -13,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <fstream>
 #include <mutex>
 #include <string>
@@ -76,8 +78,7 @@ std::vector<Kuru::SDK::UProperty*> ParamProperties(Kuru::SDK::UFunction* functio
 }
 
 void ExportToFile() {
-    const char* appData = std::getenv("APPDATA");
-    const std::string path = (appData ? std::string(appData) + "\\Kuru" : std::string(".")) + "\\scan_export.txt";
+    const std::filesystem::path path = Kuru::Storage::KuruDir() / "scan_export.txt";
     std::ofstream out(path, std::ios::trunc);
     if (!out) {
         return;
