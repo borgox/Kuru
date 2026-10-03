@@ -13,10 +13,12 @@
 #include <Core/Globals.hpp>
 #include <Core/ObjectModel.hpp>
 #include <Core/Runtime.hpp>
+#include <Core/Script.hpp>  // FFrame layout for the interpreter-globals probe (offsetof)
 #include <Kuru/HostApi.hpp>
 #include <Kuru/Mod.hpp>
 
 #include <Kuru/Common/Globals.hpp>
+#include <Kuru/Common/Pattern.hpp>
 #include <Kuru/Common/Unreal.hpp>
 
 #include <windows.h>
@@ -35,7 +37,6 @@ namespace {
 HMODULE gSelfModule = nullptr;
 void* gProcessEventAddress = nullptr; // slot 67
 void* gProcessDelegateAddress = nullptr; // slot 68
-void* gRemoteFunctionAddress = nullptr;  // slot 71
 void* gCallDelegateAddress = nullptr;        // slot 69
 void** gVTable = nullptr;                // a live UObject vtable
 constexpr int kCallFunctionVTableIndex = 76;
@@ -165,9 +166,10 @@ bool ProbeInterpreterGlobals(void* handler, Kuru::SDK::UObject* probeObj, Kuru::
     alignas(16) std::uint8_t codeBuf[64] = {};
     *reinterpret_cast<void**>(codeBuf) = probeProp;         // Stack.Code -> the property pointer (ReadObject)
     alignas(16) std::uint8_t frameBuf[0x60] = {};
-    *reinterpret_cast<void**>(frameBuf + 0x20) = probeObj;  // FFrame.Object
-    *reinterpret_cast<void**>(frameBuf + 0x28) = codeBuf;   // FFrame.Code
-    *reinterpret_cast<void**>(frameBuf + 0x30) = probeObj;  // FFrame.Locals (so a local-var handler also gives obj+Offset)
+    *reinterpret_cast<void**>(frameBuf + offsetof(Kuru::SDK::FFrame, Object)) = probeObj;
+    *reinterpret_cast<void**>(frameBuf + offsetof(Kuru::SDK::FFrame, Code)) = codeBuf;
+    // Locals too, so a local-var handler also resolves to obj+Offset.
+    *reinterpret_cast<void**>(frameBuf + offsetof(Kuru::SDK::FFrame, Locals)) = probeObj;
     const auto expectAddr =
         reinterpret_cast<std::uintptr_t>(probeObj) + static_cast<std::uintptr_t>(probeProp->Offset);
     using HandlerFn = void (*)(void*, void*, void*);
@@ -355,10 +357,6 @@ bool BootstrapGlobals() {
                 gProcessDelegateAddress = vtable[kProcessDelegateVTableIndex];
                 std::snprintf(buf, sizeof(buf), "0x%p", gProcessDelegateAddress);
                 Log(std::string("ProcessDelegate vtable[68] = ") + buf);
-                constexpr int kRemoteFunctionVTableIndex = 71;
-                gRemoteFunctionAddress = vtable[kRemoteFunctionVTableIndex];
-                std::snprintf(buf, sizeof(buf), "0x%p", gRemoteFunctionAddress);
-                Log(std::string("ProcessRemoteFunction vtable[71] = ") + buf);
                 constexpr int kCallDelegateVTableIndex = 69;
                 gCallDelegateAddress = vtable[kCallDelegateVTableIndex];
                 std::snprintf(buf, sizeof(buf), "0x%p", gCallDelegateAddress);
@@ -574,9 +572,6 @@ DWORD WINAPI HostThread(LPVOID) {
     }
     if (gCallDelegateAddress) {
         Kuru::HookEngine::InstallCallDelegate(gCallDelegateAddress);              // 69 CD
-    }
-    if (gRemoteFunctionAddress) {
-        Kuru::HookEngine::InstallProcessRemoteFunction(gRemoteFunctionAddress);   // 71 PRF
     }
     if (gVTable) {
         Kuru::HookEngine::InstallCallFunction(gVTable[kCallFunctionVTableIndex]); // 76 CF

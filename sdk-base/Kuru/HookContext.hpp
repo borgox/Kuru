@@ -20,7 +20,6 @@ enum class HookDispatch : std::uint32_t {
     ProcessInternal = 1,       // NON-virtual in RL - not in the vtable, not hookable by index (reserved)
     CallFunction = 2,          // vtable 76 - bytecode call dispatch. UFunction in arg3, params in the frame
     ProcessDelegate = 3,       // vtable 68 - RL fork: UFunction in arg1 (PE-shaped), NOT the stock FName
-    ProcessRemoteFunction = 4, // vtable 71 - net-vs-local check on ~every script call. UFunction in arg1, returns UBOOL, catches getters PE never sees
     CallDelegate = 5,          // vtable 69 - FName in arg1, the bound target is resolved to a UFunction
     /*Default for name-based hooks: fire on whichever layer dispatches the function, deduped to one
     * call per native invocation (nested layers of the same function are suppressed).

@@ -50,13 +50,6 @@ using ProcessDelegateFn = void (*)(Kuru::SDK::UObject* caller, Kuru::SDK::UFunct
 
 ProcessEventFn gOriginalProcessEvent = nullptr;
 ProcessDelegateFn gOriginalProcessDelegate = nullptr;
-/* Slot 71 = ProcessRemoteFunction (UE3 UObject vtable). Signature: UBOOL(UFunction* Function,
- * void* Parms, FFrame* Stack). It RETURNS a value, so the detour must forward the original's return (preserve RAX), or the game crashes.
-*/
-using ProcessRemoteFunctionFn = std::int64_t (*)(Kuru::SDK::UObject* caller,
-                                                 Kuru::SDK::UFunction* function, void* params,
-                                                 Kuru::SDK::FFrame* stack);
-ProcessRemoteFunctionFn gOriginalProcessRemoteFunction = nullptr;
 /* Slot 69 = CallDelegate: void(FName DelegateName, FScriptDelegate* Delegate, void* Parms,
  * void* Result). arg1 is an FName passed by value (8 bytes in RDX), so take it raw and reinterpret so
  * the ABI doesn't trouble us. The bound target lives in the FScriptDelegate, we resolve it to a
@@ -95,12 +88,11 @@ std::uint32_t* gGRuntimeUCFlags = nullptr;
  */
 using ProcessInternalFrameFn = std::int64_t (*)(void* rcx, void* frame, void* r8, void* r9);
 ProcessInternalFrameFn gOriginalProcessInternal = nullptr;
-constexpr std::size_t kProcessInternalFuncOffset = 0x18;    // frame+0x18 = Stack.Node = the executing UFunction
-constexpr std::size_t kProcessInternalLocalsOffset = 0x30;  // frame+0x30 = pointer to the params/Locals
+constexpr std::size_t kProcessInternalFuncOffset = offsetof(Kuru::SDK::FFrame, Node);   // Stack.Node = executing UFunction
+constexpr std::size_t kProcessInternalLocalsOffset = offsetof(Kuru::SDK::FFrame, Locals);  // params/Locals pointer
 void* gProcessInternalTarget = nullptr;
 void* gTargetAddress = nullptr;
 void* gProcessDelegateTarget = nullptr;
-void* gRemoteFunctionTarget = nullptr;
 void* gCallDelegateTarget = nullptr;
 void* gCallFunctionTarget = nullptr;
 
@@ -282,34 +274,6 @@ void DetourProcessDelegate(Kuru::SDK::UObject* caller, Kuru::SDK::UFunction* fun
     }
     DispatchFrom(tables->post, context, fireAny);
     LeaveActive(function, fireAny);
-}
-
-std::int64_t DetourProcessRemoteFunction(Kuru::SDK::UObject* caller, Kuru::SDK::UFunction* function,
-                                         void* params, Kuru::SDK::FFrame* stack) {
-    static bool firstCall = true;
-    /* debug only
-    if (firstCall) {
-        firstCall = false;
-        Log("ProcessRemoteFunction (slot 71) detour is FIRING");
-    }
-    */
-    const HookTables* tables = gTablesRaw.load(std::memory_order_acquire);
-    if (!HasHooks(tables, function)) {
-        return gOriginalProcessRemoteFunction
-                   ? gOriginalProcessRemoteFunction(caller, function, params, stack)
-                   : 0;
-    }
-    const bool fireAny = ShouldFireAny(function, Kuru::HookDispatch::ProcessRemoteFunction);
-    Kuru::HookContext context{Kuru::HookDispatch::ProcessRemoteFunction, caller, function,
-                              params, nullptr, stack, false};
-    DispatchFrom(tables->pre, context, fireAny);
-    std::int64_t ret = 0;
-    if (!context.block && gOriginalProcessRemoteFunction) {
-        ret = gOriginalProcessRemoteFunction(caller, function, params, stack);
-    }
-    DispatchFrom(tables->post, context, fireAny);
-    LeaveActive(function, fireAny);
-    return ret;
 }
 
 // Slot 69 = CallDelegate
@@ -797,22 +761,6 @@ bool InstallProcessDelegate(void* address) {
     return true;
 }
 
-bool InstallProcessRemoteFunction(void* address) {
-    if (!address) {
-        Log("ProcessRemoteFunction hook: null address");
-        return false;
-    }
-    gRemoteFunctionTarget = address;
-    if (MH_CreateHook(address, reinterpret_cast<void*>(&DetourProcessRemoteFunction),
-                      reinterpret_cast<void**>(&gOriginalProcessRemoteFunction)) != MH_OK ||
-        MH_EnableHook(address) != MH_OK) {
-        Log("ProcessRemoteFunction hook install failed");
-        return false;
-    }
-    Log("ProcessRemoteFunction (slot 71) detour installed");
-    return true;
-}
-
 bool InstallCallDelegate(void* address) {
     if (!address) {
         Log("CallDelegate hook: null address");
@@ -878,9 +826,6 @@ void Shutdown() {
     }
     if (gProcessDelegateTarget) {
         MH_DisableHook(gProcessDelegateTarget);
-    }
-    if (gRemoteFunctionTarget) {
-        MH_DisableHook(gRemoteFunctionTarget);
     }
     if (gCallDelegateTarget) {
         MH_DisableHook(gCallDelegateTarget);
