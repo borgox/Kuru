@@ -90,8 +90,36 @@ struct HookEntry {
     Kuru::HookDispatch dispatch;  // which layer this hook wants
 };
 
-// Keyed by the resolved UFunction*, the detour receives that pointer, so lookup is a hash hit with no string work on the hot path.
-using HookMap = std::unordered_map<Kuru::SDK::UFunction*, std::vector<HookEntry>>;
+class HookMap {
+public:
+    using value_type = std::pair<Kuru::SDK::UFunction*, std::vector<HookEntry>>;
+    using iterator = std::vector<value_type>::iterator;
+    using const_iterator = std::vector<value_type>::const_iterator;
+
+    iterator begin() noexcept { return entries_.begin(); }
+    iterator end() noexcept { return entries_.end(); }
+    [[nodiscard]] const_iterator begin() const noexcept { return entries_.begin(); }
+    [[nodiscard]] const_iterator end() const noexcept { return entries_.end(); }
+
+    [[nodiscard]] const_iterator find(Kuru::SDK::UFunction* key) const {
+        const auto it = std::lower_bound(entries_.begin(), entries_.end(), key, Less);
+        return (it != entries_.end() && it->first == key) ? it : entries_.end();
+    }
+    [[nodiscard]] std::size_t count(Kuru::SDK::UFunction* key) const {
+        return find(key) != entries_.end() ? 1 : 0;
+    }
+    std::vector<HookEntry>& operator[](Kuru::SDK::UFunction* key) {
+        auto it = std::lower_bound(entries_.begin(), entries_.end(), key, Less);
+        if (it == entries_.end() || it->first != key) {
+            it = entries_.insert(it, value_type{key, {}});
+        }
+        return it->second;
+    }
+
+private:
+    static bool Less(const value_type& entry, Kuru::SDK::UFunction* key) { return entry.first < key; }
+    std::vector<value_type> entries_;  // sorted ascending by first (the UFunction*)
+};
 struct HookTables {
     HookMap pre;
     HookMap post;
