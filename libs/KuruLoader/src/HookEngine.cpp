@@ -662,9 +662,24 @@ void DispatchEvent(const char* identifier, const char* filter, void* payload) {
             }
         }
     }
+    std::vector<Kuru::HookHandle> faulted;
     for (const Listener& l : matched) {  // fire outside the lock: a listener may register/dispatch reentrantly
         if (!SafeInvokeListener(l.thunk, payload, l.user)) {
-            Log(std::string("event listener faulted (suppressed) for ") + identifier);
+            Log(std::string("event listener faulted for ") + identifier + ", removing it");
+            faulted.push_back(l.handle);  // a listener that access-violates once will keep doing it: evict it
+        }
+    }
+    if (!faulted.empty()) {
+        std::scoped_lock lock(gListenerMutex);
+        const auto it = gListeners.find(identifier);
+        if (it != gListeners.end()) {
+            auto& vec = it->second;
+            vec.erase(std::remove_if(vec.begin(), vec.end(),
+                                     [&faulted](const Listener& l) {
+                                         return std::find(faulted.begin(), faulted.end(), l.handle) !=
+                                                faulted.end();
+                                     }),
+                      vec.end());
         }
     }
 }
