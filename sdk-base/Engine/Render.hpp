@@ -24,16 +24,16 @@ struct FUntypedBulkDataMirror {
     std::int32_t BulkDataSizeOnDisk; // 0x0018
     std::int32_t SavedBulkDataFlags; // 0x001C
     std::int32_t SavedElementCount;  // 0x0020
-    std::uint32_t Pad_0024;          // 0x0024
+    // 0x0024: C++ padding to 8-align the next field (compiler-inserted)
     std::uint64_t SavedBulkDataOffsetInFile; // 0x0028
     std::int32_t SavedBulkDataSizeOnDisk; // 0x0030
-    std::uint32_t Pad_0034;          // 0x0034
+    // 0x0034: C++ padding
     FPointer BulkData;               // 0x0038
     std::int32_t LockStatus;         // 0x0040
-    std::uint32_t Pad_0044;          // 0x0044
+    // 0x0044: C++ padding
     FPointer AttachedAr;             // 0x0048
     std::int32_t bShouldFreeOnEmpty; // 0x0050
-    std::uint32_t Pad_0054;          // 0x0054
+    // 0x0054: trailing C++ padding (struct rounds up to 0x58)
 };
 
 struct FIndirectArrayMirror {

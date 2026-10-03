@@ -5,7 +5,7 @@
 
 namespace Kuru::SDK {
 
-class FOutputDevice;
+struct FOutputDevice;  // defined in Script.hpp (FFrame's base), used here only by reference
 
 enum class ECacheBehaviour : std::uint32_t {
     WriteCombine,

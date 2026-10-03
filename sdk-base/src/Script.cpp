@@ -7,12 +7,6 @@ namespace Kuru::SDK {
 FFrame::FFrame(UObject* object, UStruct* node, std::uint8_t* code, std::uint8_t* locals)
     : Node(node), Object(object), Code(code), Locals(locals) {}
 
-void FFrame::Step(UObject* context, void* result) {
-    if (context) {
-        context->ProcessInternal(*this, result);
-    }
-}
-
 void FFrame::Serialize(FArchive& archive) {
     archive << Node;
     archive << Object;
