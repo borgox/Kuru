@@ -12,14 +12,10 @@ namespace Kuru::Common {
 struct RocketLeagueGlobals {
     const TArray<void*>* GNames = nullptr;
     const TArray<UObjectPrefix*>* GObjects = nullptr;
-    std::uintptr_t GNamesAddress = 0;
-    std::uintptr_t GObjectsAddress = 0;
     std::uintptr_t GMallocAddress = 0;
     std::uintptr_t GMallocValue = 0;
     std::uintptr_t PsyonixBuildIDAddress = 0;
     std::uintptr_t BuildDateAddress = 0;
-    std::int32_t NameCount = 0;
-    std::int32_t ObjectCount = 0;
     std::string PsyonixBuildID;
     std::string BuildDate;
 };

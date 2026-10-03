@@ -571,15 +571,15 @@ std::string PackageNameFromFullName(const std::string& fullName) {
 }
 
 void LogSampleObjects(const Kuru::Common::RocketLeagueGlobals& globals) {
-    if (!globals.GObjects || globals.ObjectCount <= 0) {
+    if (!globals.GObjects || globals.GObjects->Count <= 0) {
         return;
     }
 
     Log("Sample objects:");
-    const int stride = globals.ObjectCount > 8 ? globals.ObjectCount / 8 : 1;
+    const int stride = globals.GObjects->Count > 8 ? globals.GObjects->Count / 8 : 1;
     int printed = 0;
 
-    for (int index = 0; index < globals.ObjectCount && printed < 8; index += stride) {
+    for (int index = 0; index < globals.GObjects->Count && printed < 8; index += stride) {
         const auto* object = globals.GObjects->Data[index];
         if (!object) {
             continue;
@@ -665,9 +665,9 @@ Kuru::Common::DumpSchema::DumpDocument BuildDumpDocument(const Kuru::Common::Roc
     document.game = "Rocket League";
 
     int typeCount = 0;
-    for (int index = 0; index < globals.ObjectCount; ++index) {
+    for (int index = 0; index < globals.GObjects->Count; ++index) {
         if (index != 0 && (index % 10000) == 0) {
-            Log("Build progress index=" + std::to_string(index) + "/" + std::to_string(globals.ObjectCount) +
+            Log("Build progress index=" + std::to_string(index) + "/" + std::to_string(globals.GObjects->Count) +
                 " types=" + std::to_string(typeCount));
         }
 
@@ -721,7 +721,7 @@ Kuru::Common::DumpSchema::DumpDocument BuildDumpDocument(const Kuru::Common::Roc
     }
 
     Log("Built reflection model types=" + std::to_string(typeCount) + " from " +
-        std::to_string(globals.ObjectCount) + " objects");
+        std::to_string(globals.GObjects->Count) + " objects");
     return document;
 }
 
@@ -763,10 +763,6 @@ DWORD WINAPI MainThread(LPVOID parameter) {
     Kuru::Common::RocketLeagueGlobals globals{};
     globals.GNames = validation.gNames;
     globals.GObjects = validation.gObjects;
-    globals.GNamesAddress = reinterpret_cast<std::uintptr_t>(validation.gNames);
-    globals.GObjectsAddress = reinterpret_cast<std::uintptr_t>(validation.gObjects);
-    globals.NameCount = validation.gNames->Count;
-    globals.ObjectCount = validation.gObjects->Count;
 
     if (const auto gMallocSlot = ResolveRipRelativeGlobalSlot(GMallocPattern); gMallocSlot.has_value()) {
         globals.GMallocAddress = *gMallocSlot;
@@ -797,8 +793,10 @@ DWORD WINAPI MainThread(LPVOID parameter) {
 
     Kuru::Common::SetRocketLeagueGlobals(globals);
 
-    Log("GNames validated at " + Hex(globals.GNamesAddress) + " count=" + std::to_string(globals.NameCount));
-    Log("GObjects validated at " + Hex(globals.GObjectsAddress) + " count=" + std::to_string(globals.ObjectCount));
+    Log("GNames validated at " + Hex(reinterpret_cast<std::uintptr_t>(globals.GNames)) +
+        " count=" + std::to_string(globals.GNames->Count));
+    Log("GObjects validated at " + Hex(reinterpret_cast<std::uintptr_t>(globals.GObjects)) +
+        " count=" + std::to_string(globals.GObjects->Count));
     Log("Valid UObject samples=" + std::to_string(validation.validObjectSamples));
 
     LogSampleObjects(globals);

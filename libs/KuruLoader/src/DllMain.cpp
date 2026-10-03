@@ -360,14 +360,13 @@ bool BootstrapGlobals() {
     // GMalloc + PI/PD/PRF/etc... bindings are resolved as their features land.
     Kuru::SDK::SetRuntimeBindings(bindings);
 
-    Log("globals bootstrapped: names=" + std::to_string(globals->NameCount) +
-        " objects=" + std::to_string(globals->ObjectCount));
+    Log("globals bootstrapped: names=" + std::to_string(globals->GNames ? globals->GNames->Count : 0) +
+        " objects=" + std::to_string(globals->GObjects ? globals->GObjects->Count : 0));
 
     // Now that GObjects is live, resolve ProcessInternal from UFunction::Func
     ResolveProcessInternal();
 
-    // Resolve GNatives (the bytecode interpreter's opcode->handler table) out of ProcessInternal, so the
-    // CallFunction hook can read native/body-less call args via the game's own interpreter
+    // Resolve GNatives (the bytecode interpreter's opcode->handler table) out of ProcessInternal, so the CallFunction hook can read native/body-less call args via the game's own interpreter
     void* gnatives = ResolveGNatives(gPIExact);
     if (gnatives) {
         Kuru::HookEngine::SetGNatives(gnatives);

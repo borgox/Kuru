@@ -13,10 +13,6 @@ RocketLeagueGlobals gGlobals;
     RocketLeagueGlobals globals{};
     globals.GNames = validation.gNames;
     globals.GObjects = validation.gObjects;
-    globals.GNamesAddress = reinterpret_cast<std::uintptr_t>(validation.gNames);
-    globals.GObjectsAddress = reinterpret_cast<std::uintptr_t>(validation.gObjects);
-    globals.NameCount = validation.gNames ? validation.gNames->Count : 0;
-    globals.ObjectCount = validation.gObjects ? validation.gObjects->Count : 0;
     return globals;
 }
 
