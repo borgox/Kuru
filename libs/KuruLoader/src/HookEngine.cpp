@@ -14,7 +14,7 @@
 
 #include <cstring>
 
-#include <MinHook.h>
+#include "Hook.hpp"
 #include <windows.h>
 
 #include <algorithm>
@@ -44,20 +44,8 @@ bool gTrace = false;
  * member call the game makes.
  */
 using ProcessEventFn = void (*)(Kuru::SDK::UObject* caller, Kuru::SDK::UFunction* function, void* params, void* result);
-// Slot 68 = ProcessDelegate
-using ProcessDelegateFn = void (*)(Kuru::SDK::UObject* caller, Kuru::SDK::UFunction* function,
-                                   void* params, void* result);
 
 ProcessEventFn gOriginalProcessEvent = nullptr;
-ProcessDelegateFn gOriginalProcessDelegate = nullptr;
-/* Slot 69 = CallDelegate: void(FName DelegateName, FScriptDelegate* Delegate, void* Parms,
- * void* Result). arg1 is an FName passed by value (8 bytes in RDX), so take it raw and reinterpret so
- * the ABI doesn't trouble us. The bound target lives in the FScriptDelegate, we resolve it to a
- * UFunction* so delegate hooks share the same name-keyed registry as the other layers.
- */
-using CallDelegateFn = void (*)(Kuru::SDK::UObject* caller, std::uint64_t rawDelegateName,
-                                   Kuru::SDK::FScriptDelegate* delegate, void* params, void* result);
-CallDelegateFn gOriginalCallDelegate = nullptr;
 /* Slot 76 = CallFunction: void(UObject* this, FFrame& Stack, void* Result, UFunction* Function).
  * The function being called is arg3 (R9), the caller's frame is arg1 (RDX).
  */
@@ -90,11 +78,9 @@ using ProcessInternalFrameFn = std::int64_t (*)(void* rcx, void* frame, void* r8
 ProcessInternalFrameFn gOriginalProcessInternal = nullptr;
 constexpr std::size_t kProcessInternalFuncOffset = offsetof(Kuru::SDK::FFrame, Node);   // Stack.Node = executing UFunction
 constexpr std::size_t kProcessInternalLocalsOffset = offsetof(Kuru::SDK::FFrame, Locals);  // params/Locals pointer
-void* gProcessInternalTarget = nullptr;
-void* gTargetAddress = nullptr;
-void* gProcessDelegateTarget = nullptr;
-void* gCallDelegateTarget = nullptr;
-void* gCallFunctionTarget = nullptr;
+Kuru::THook gProcessEventHook;
+Kuru::THook gProcessInternalHook;
+Kuru::THook gCallFunctionHook;
 
 struct HookEntry {
     Kuru::HookCallbackFn callback;
@@ -253,60 +239,6 @@ void DetourProcessEvent(Kuru::SDK::UObject* caller, Kuru::SDK::UFunction* functi
     DispatchFrom(tables->pre, context, fireAny);
     if (!context.block && gOriginalProcessEvent) {  // a Pre hook can Block() the original
         gOriginalProcessEvent(caller, function, params, result);
-    }
-    DispatchFrom(tables->post, context, fireAny);
-    LeaveActive(function, fireAny);
-}
-
-void DetourProcessDelegate(Kuru::SDK::UObject* caller, Kuru::SDK::UFunction* function, void* params,
-                           void* result) {
-    const HookTables* tables = gTablesRaw.load(std::memory_order_acquire);
-    if (!HasHooks(tables, function)) {
-        if (gOriginalProcessDelegate) gOriginalProcessDelegate(caller, function, params, result);
-        return;
-    }
-    const bool fireAny = ShouldFireAny(function, Kuru::HookDispatch::ProcessDelegate);
-    Kuru::HookContext context{Kuru::HookDispatch::ProcessDelegate, caller, function,
-                              params, result, nullptr, false};
-    DispatchFrom(tables->pre, context, fireAny);
-    if (!context.block && gOriginalProcessDelegate) {
-        gOriginalProcessDelegate(caller, function, params, result);
-    }
-    DispatchFrom(tables->post, context, fireAny);
-    LeaveActive(function, fireAny);
-}
-
-// Slot 69 = CallDelegate
-void DetourCallDelegate(Kuru::SDK::UObject* caller, std::uint64_t rawDelegateName,
-                           Kuru::SDK::FScriptDelegate* delegate, void* params, void* result) {
-    Kuru::SDK::FName delegateName{};
-    std::memcpy(&delegateName, &rawDelegateName, sizeof(delegateName));
-    /* debug only
-    static bool firstCall = true;
-    if (firstCall) {
-        firstCall = false;
-        Log("CallDelegate (slot 69) is FIRING; delegate=" + delegateName.ToString());
-    }
-    */
-    Kuru::SDK::UFunction* function = nullptr;
-    if (delegate && delegate->Object) {
-        if (Kuru::SDK::UClass* cls = delegate->Object->GetClass()) {
-            function = cls->FindFunctionByName(delegate->FunctionName);
-        }
-    }
-    const HookTables* tables = gTablesRaw.load(std::memory_order_acquire);
-    if (!HasHooks(tables, function)) {
-        if (gOriginalCallDelegate) {
-            gOriginalCallDelegate(caller, rawDelegateName, delegate, params, result);
-        }
-        return;
-    }
-    const bool fireAny = ShouldFireAny(function, Kuru::HookDispatch::CallDelegate);
-    Kuru::HookContext context{Kuru::HookDispatch::CallDelegate, caller, function,
-                              params, result, nullptr, false};
-    DispatchFrom(tables->pre, context, fireAny);
-    if (!context.block && gOriginalCallDelegate) {
-        gOriginalCallDelegate(caller, rawDelegateName, delegate, params, result);
     }
     DispatchFrom(tables->post, context, fireAny);
     LeaveActive(function, fireAny);
@@ -727,65 +659,18 @@ bool Install(void* processEventAddress) {
         Log("hook install failed: null ProcessEvent address");
         return false;
     }
-    if (MH_Initialize() != MH_OK) {
-        Log("hook install failed: MH_Initialize");
-        return false;
-    }
-    gTargetAddress = processEventAddress;
-    if (MH_CreateHook(processEventAddress, reinterpret_cast<void*>(&DetourProcessEvent),
-                      reinterpret_cast<void**>(&gOriginalProcessEvent)) != MH_OK) {
-        Log("hook install failed: MH_CreateHook");
-        return false;
-    }
-    if (MH_EnableHook(processEventAddress) != MH_OK) {
-        Log("hook install failed: MH_EnableHook");
+    if (!gProcessEventHook.Install(processEventAddress, reinterpret_cast<void*>(&DetourProcessEvent),
+                                   reinterpret_cast<void**>(&gOriginalProcessEvent))) {
+        Log("hook install failed: ProcessEvent");
         return false;
     }
     Log("ProcessEvent detour installed");
     return true;
 }
 
-bool InstallProcessDelegate(void* address) {
-    if (!address) {
-        Log("ProcessDelegate hook: null address");
-        return false;
-    }
-    gProcessDelegateTarget = address;
-    if (MH_CreateHook(address, reinterpret_cast<void*>(&DetourProcessDelegate),
-                      reinterpret_cast<void**>(&gOriginalProcessDelegate)) != MH_OK ||
-        MH_EnableHook(address) != MH_OK) {
-        Log("ProcessDelegate hook install failed");
-        return false;
-    }
-    Log("ProcessDelegate (slot 68) detour installed");
-    return true;
-}
-
-bool InstallCallDelegate(void* address) {
-    if (!address) {
-        Log("CallDelegate hook: null address");
-        return false;
-    }
-    gCallDelegateTarget = address;
-    if (MH_CreateHook(address, reinterpret_cast<void*>(&DetourCallDelegate),
-                      reinterpret_cast<void**>(&gOriginalCallDelegate)) != MH_OK ||
-        MH_EnableHook(address) != MH_OK) {
-        Log("CallDelegate hook install failed");
-        return false;
-    }
-    Log("CallDelegate (slot 69) detour installed");
-    return true;
-}
-
 bool InstallProcessInternal(void* address) {
-    if (!address) {
-        Log("ProcessInternal hook: null address");
-        return false;
-    }
-    gProcessInternalTarget = address;
-    if (MH_CreateHook(address, reinterpret_cast<void*>(&DetourProcessInternal),
-                      reinterpret_cast<void**>(&gOriginalProcessInternal)) != MH_OK ||
-        MH_EnableHook(address) != MH_OK) {
+    if (!gProcessInternalHook.Install(address, reinterpret_cast<void*>(&DetourProcessInternal),
+                                      reinterpret_cast<void**>(&gOriginalProcessInternal))) {
         Log("ProcessInternal hook install failed");
         return false;
     }
@@ -794,14 +679,8 @@ bool InstallProcessInternal(void* address) {
 }
 
 bool InstallCallFunction(void* address) {
-    if (!address) {
-        Log("CallFunction hook: null address");
-        return false;
-    }
-    gCallFunctionTarget = address;
-    if (MH_CreateHook(address, reinterpret_cast<void*>(&DetourCallFunction),
-                      reinterpret_cast<void**>(&gOriginalCallFunction)) != MH_OK ||
-        MH_EnableHook(address) != MH_OK) {
+    if (!gCallFunctionHook.Install(address, reinterpret_cast<void*>(&DetourCallFunction),
+                                   reinterpret_cast<void**>(&gOriginalCallFunction))) {
         Log("CallFunction hook install failed");
         return false;
     }
@@ -821,22 +700,10 @@ void SetInterpreterGlobals(void* gProperty, void* gPropAddr, void* gPropObject, 
 }
 
 void Shutdown() {
-    if (gTargetAddress) {
-        MH_DisableHook(gTargetAddress);
-    }
-    if (gProcessDelegateTarget) {
-        MH_DisableHook(gProcessDelegateTarget);
-    }
-    if (gCallDelegateTarget) {
-        MH_DisableHook(gCallDelegateTarget);
-    }
-    if (gCallFunctionTarget) {
-        MH_DisableHook(gCallFunctionTarget);
-    }
-    if (gProcessInternalTarget) {
-        MH_DisableHook(gProcessInternalTarget);
-    }
-    MH_Uninitialize();
+    // Removing the hooks releases their MinHook references
+    gProcessEventHook.Remove();
+    gProcessInternalHook.Remove();
+    gCallFunctionHook.Remove();
 }
 
 const Kuru::HostApi* Api() {

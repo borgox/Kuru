@@ -14,12 +14,12 @@ function:
 | `ProcessEvent` | vtable 67 | the main entry to call a `UFunction` on an object | flat `Parms` blob |
 | `ProcessInternal` | non-virtual | runs a *script* function's body (the interpreter) | frame `Locals` |
 | `CallFunction` | vtable 76 | bytecode call dispatch - where script *calls* a function | inline in bytecode |
-| `ProcessDelegate` | vtable 68 | delegate dispatch (fork: `UFunction` in arg1) | flat blob |
-| `CallDelegate` | vtable 69 | one bound delegate target | flat blob |
 
-(`ProcessState`, vtable 70, isn't safely hookable, so Kuru leaves it alone. `ProcessRemoteFunction`,
-vtable 71, is always reached *through* `ProcessEvent`/`ProcessInternal`/`CallFunction`, so hooking those
-already covers it, Kuru doesn't hook it separately.)
+Kuru hooks only these three. The other delegate/event entry points all funnel into them, so hooking them
+separately would only cause duplicate fires: `ProcessDelegate` (vtable 68), `CallDelegate` (vtable 69) and
+`ProcessRemoteFunction` (vtable 71) are each always reached *through*
+`ProcessEvent`/`ProcessInternal`/`CallFunction`, and `ProcessState` (vtable 70) isn't safely hookable, so
+Kuru leaves them all alone.
 
 ## The same call, several layers
 
@@ -58,4 +58,4 @@ exactly one.
 The layers exist because the engine has several reasons to call a function - events, script calls, delegates,
 networking - and each grew its own path. Kuru can't remove that; instead it maps the paths, picks the one
 useful point per function, and hides the rest. The [hook engine](07-the-hook-engine.md) page is how that
-mapping is implemented, and [delegates](09-delegates.md) covers the two delegate layers in detail.
+mapping is implemented, and [delegates](09-delegates.md) covers how delegates dispatch.

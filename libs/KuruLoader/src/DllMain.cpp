@@ -36,8 +36,6 @@ namespace {
 
 HMODULE gSelfModule = nullptr;
 void* gProcessEventAddress = nullptr; // slot 67
-void* gProcessDelegateAddress = nullptr; // slot 68
-void* gCallDelegateAddress = nullptr;        // slot 69
 void** gVTable = nullptr;                // a live UObject vtable
 constexpr int kCallFunctionVTableIndex = 76;
 
@@ -350,15 +348,6 @@ bool BootstrapGlobals() {
                 char buf[32];
                 std::snprintf(buf, sizeof(buf), "0x%p", peAddr);
                 Log(std::string("ProcessEvent resolved via vtable[67] = ") + buf);
-                constexpr int kProcessDelegateVTableIndex = 68;
-                gProcessDelegateAddress = vtable[kProcessDelegateVTableIndex];
-                std::snprintf(buf, sizeof(buf), "0x%p", gProcessDelegateAddress);
-                Log(std::string("ProcessDelegate vtable[68] = ") + buf);
-                constexpr int kCallDelegateVTableIndex = 69;
-                gCallDelegateAddress = vtable[kCallDelegateVTableIndex];
-                std::snprintf(buf, sizeof(buf), "0x%p", gCallDelegateAddress);
-                Log(std::string("CallDelegate vtable[69] = ") + buf);
-                // missing CF??
                 (void)peAddr;  // ProcessInternal resolves from UFunction::Func after bindings are set
                 break;
             }
@@ -561,14 +550,7 @@ DWORD WINAPI HostThread(LPVOID) {
     });
     // Enable the ProcessEvent detour only after mods have registered their hooks
     if (gProcessEventAddress) {
-        Kuru::HookEngine::Install(gProcessEventAddress);
-    }
-    // All confirmed dispatch layers
-    if (gProcessDelegateAddress) {
-        Kuru::HookEngine::InstallProcessDelegate(gProcessDelegateAddress);        // 68 PD
-    }
-    if (gCallDelegateAddress) {
-        Kuru::HookEngine::InstallCallDelegate(gCallDelegateAddress);              // 69 CD
+        Kuru::HookEngine::Install(gProcessEventAddress);                          // 67 PE
     }
     if (gVTable) {
         Kuru::HookEngine::InstallCallFunction(gVTable[kCallFunctionVTableIndex]); // 76 CF
