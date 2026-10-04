@@ -2,14 +2,9 @@
 
 #include <MinHook.h>
 
-// Thin RAII wrapper over MinHook so install sites don't repeat the create/enable/disable/remove dance and
-// so the library init/teardown is reference counted across the hook subsystems (engine + GUI overlay).
-
 namespace Kuru {
 
-// MinHook's process-wide init/teardown, reference counted by the number of live THook objects. THook calls
-// these itself, so the library is initialized on the first installed hook and uninitialized when the last
-// one is removed, regardless of which subsystem owns them.
+
 namespace MinHook {
 
 inline int& RefCount() noexcept {
@@ -29,9 +24,7 @@ inline void Release() {
 
 } // namespace MinHook
 
-// One MinHook detour. Install() creates and enables it; Remove() (and the destructor) disables and removes
-// it. Each installed hook holds one MinHook reference, so callers never init/uninit the library themselves.
-// Non-copyable; a given target is owned by exactly one THook.
+// One MinHook detour. Install() creates and enables it; Remove() (and the destructor) disables and removes it.
 class THook {
 public:
     THook() = default;
@@ -39,8 +32,7 @@ public:
     THook(const THook&) = delete;
     THook& operator=(const THook&) = delete;
 
-    // `original` receives the trampoline used to call the un-hooked function. Returns false and installs
-    // nothing on a null target or any MinHook failure.
+    // `original` receives the trampoline used to call the un-hooked function. Returns false and installs nothing on a null target or any MinHook failure.
     [[nodiscard]] bool Install(void* target, void* detour, void** original) {
         Remove();
         if (!target) {
