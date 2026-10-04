@@ -57,6 +57,13 @@ public:
         }
     }
 
+    // Disable entry without freeing the trampoline used by in-flight calls.
+    [[nodiscard]] bool Disable() {
+        if (!target_) return true;
+        const MH_STATUS status = MH_DisableHook(target_);
+        return status == MH_OK || status == MH_ERROR_DISABLED;
+    }
+
     [[nodiscard]] bool Installed() const noexcept { return target_ != nullptr; }
 
 private:

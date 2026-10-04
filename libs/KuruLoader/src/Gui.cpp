@@ -17,6 +17,7 @@
 #include <Engine/World.hpp>
 
 #include "Hook.hpp"
+#include "Lifecycle.hpp"
 #include <d3d11.h>
 #include <dxgi.h>
 #include <windows.h>
@@ -53,6 +54,7 @@ void* gPresentTarget = nullptr;
 void* gResizeTarget = nullptr;
 Kuru::THook gPresentHook;
 Kuru::THook gResizeHook;
+Kuru::Lifecycle::Activity gActivity;
 
 ID3D11Device* gDevice = nullptr;
 ID3D11DeviceContext* gContext = nullptr;
@@ -90,6 +92,7 @@ std::vector<ImDrawList*> gPresentLists;   // render-thread pool of draw lists th
 
 // The frame is built on the window thread
 constexpr UINT WM_KURU_BUILD = WM_APP + 0x4B55;  // 'KU'
+constexpr UINT WM_KURU_DETACH = WM_APP + 0x4B56;
 std::atomic<bool> gBuildPending{false};
 
 // TEMP diagnostics: how many raw input messages actually reach our WndProc.
@@ -284,6 +287,23 @@ void RestoreGameCursor() {
 }
 
 LRESULT __stdcall DetourWndProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam) {
+    Kuru::Lifecycle::Activity::Scope activity(gActivity);
+    if (msg == WM_KURU_DETACH && Kuru::Lifecycle::stopping.load()) {
+        // Restore on the owning window thread, and refuse to overwrite a later subclass.
+        if (reinterpret_cast<WNDPROC>(GetWindowLongPtrW(window, GWLP_WNDPROC)) != &DetourWndProc)
+            return 0;
+        SetLastError(0);
+        if (!SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(gOriginalWndProc)) &&
+            GetLastError() != 0) return 0;
+        MSG pending{};
+        while (PeekMessageW(&pending, window, WM_KURU_BUILD, WM_KURU_BUILD, PM_REMOVE)) {}
+        gBuildPending.store(false);
+        return 1;
+    }
+    if (Kuru::Lifecycle::stopping.load()) {
+        if (msg == WM_KURU_BUILD) return 0;
+        return CallWindowProcW(gOriginalWndProc, window, msg, wParam, lParam);
+    }
     // Our own frame-build request, posted by the Present detour.
     if (msg == WM_KURU_BUILD) {
         gBuildPending.store(false, std::memory_order_relaxed);
@@ -548,6 +568,8 @@ void RenderSnapshot() {
 }
 
 HRESULT __stdcall DetourPresent(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags) {
+    Kuru::Lifecycle::Activity::Scope activity(gActivity);
+    if (Kuru::Lifecycle::stopping.load()) return gOriginalPresent(swapChain, syncInterval, flags);
     Kuru::ThreadBridge::NotifyPresent();  // drives the game-thread tick (consumed in the PE detour)
     if (!gInitialized.load(std::memory_order_acquire)) {
         InitializeOverlay(swapChain);
@@ -567,6 +589,8 @@ HRESULT __stdcall DetourPresent(IDXGISwapChain* swapChain, UINT syncInterval, UI
 
 HRESULT __stdcall DetourResizeBuffers(IDXGISwapChain* swapChain, UINT bufferCount, UINT width,
                                       UINT height, DXGI_FORMAT format, UINT flags) {
+    Kuru::Lifecycle::Activity::Scope activity(gActivity);
+    // Still release the backbuffer during shutdown if the game resizes before hooks are disabled.
     if (gRenderTarget) {
         gRenderTarget->Release();
         gRenderTarget = nullptr;
@@ -652,18 +676,38 @@ void HostGetImGuiAllocators(void** allocFn, void** freeFn, void** userData) {
                                  reinterpret_cast<ImGuiMemFreeFunc*>(freeFn), userData);
 }
 
+bool DetachWindow() {
+    if (!gWindow || !gOriginalWndProc) return true;
+    if (!IsWindow(gWindow)) return true;
+    if (reinterpret_cast<WNDPROC>(GetWindowLongPtrW(gWindow, GWLP_WNDPROC)) != &DetourWndProc)
+        return false;
+    DWORD_PTR result = 0;
+    return SendMessageTimeoutW(gWindow, WM_KURU_DETACH, 0, 0,
+                              SMTO_ABORTIFHUNG | SMTO_BLOCK, 5000, &result) != 0 && result == 1;
+}
+
+bool Disable() {
+    const bool present = gPresentHook.Disable();
+    const bool resize = gResizeHook.Disable();
+    return present && resize;
+}
+
+bool WaitForIdle() { return gActivity.WaitForIdle(); }
+
+void RestoreCursorForShutdown() {
+    if (gInitialized.load()) RestoreGameCursor();
+}
+
 void Shutdown() {
     // Clearing this makes BuildOverlayFrame  early-return, so no new frames are built.
     const bool wasInitialized = gInitialized.exchange(false, std::memory_order_acq_rel);
     gPresentHook.Remove();
     gResizeHook.Remove();
     if (wasInitialized) {
-        if (gWindow && gOriginalWndProc) {
+        if (gWindow && gOriginalWndProc &&
+            reinterpret_cast<WNDPROC>(GetWindowLongPtrW(gWindow, GWLP_WNDPROC)) == &DetourWndProc) {
             SetWindowLongPtrW(gWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(gOriginalWndProc));
         }
-        ImGui_ImplDX11_Shutdown();
-        ImGui_ImplWin32_Shutdown();
-        ImGui::DestroyContext();
     }
     {
         std::scoped_lock lock(gSnapshotMutex);
@@ -674,6 +718,12 @@ void Shutdown() {
         gSnapshotFront = FrameSnapshot{};
         gSnapshotBuild = FrameSnapshot{};
     }
+    if (wasInitialized) {
+        ImGui_ImplDX11_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext();
+    }
+    gModRenderer = {};
     if (gRenderTarget) gRenderTarget->Release();
     if (gContext) gContext->Release();
     if (gDevice) gDevice->Release();

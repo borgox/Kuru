@@ -15,6 +15,7 @@
 #include <cstring>
 
 #include "Hook.hpp"
+#include "Lifecycle.hpp"
 #include <ankerl/unordered_dense.h>
 #include <windows.h>
 
@@ -81,6 +82,7 @@ constexpr std::size_t kProcessInternalLocalsOffset = offsetof(Kuru::SDK::FFrame,
 Kuru::THook gProcessEventHook;
 Kuru::THook gProcessInternalHook;
 Kuru::THook gCallFunctionHook;
+Kuru::Lifecycle::Activity gActivity;
 
 struct HookEntry {
     Kuru::HookCallbackFn callback;
@@ -167,6 +169,7 @@ void DispatchFrom(const HookMap& map, Kuru::HookContext& context, bool fireAny) 
         return;
     }
     for (const HookEntry& entry : it->second) {
+        if (Kuru::Lifecycle::stopping.load()) break;
 
         const bool fire = entry.dispatch == context.dispatch ||
                           (entry.dispatch == Kuru::HookDispatch::Any && fireAny);
@@ -220,8 +223,13 @@ void TraceProcessEvent(Kuru::SDK::UFunction* function) {
 }
 
 void DetourProcessEvent(Kuru::SDK::UObject* caller, Kuru::SDK::UFunction* function, void* params, void* result) {
+    Kuru::Lifecycle::Activity::Scope activity(gActivity);
     // Game-thread tick: runs queued Execute tasks, timeouts, and mod OnUpdate once per frame.
     Kuru::ThreadBridge::PumpFromGameThread();
+    if (Kuru::Lifecycle::stopping.load()) {
+        if (gOriginalProcessEvent) gOriginalProcessEvent(caller, function, params, result);
+        return;
+    }
     if (gTrace) {
         TraceProcessEvent(function);
     }
@@ -322,6 +330,11 @@ bool ReInvokeNative(Kuru::SDK::UObject* caller, Kuru::SDK::UFunction* function,
 
 void DetourCallFunction(Kuru::SDK::UObject* caller, Kuru::SDK::FFrame* stack, void* result,
                         Kuru::SDK::UFunction* function) {
+    Kuru::Lifecycle::Activity::Scope activity(gActivity);
+    if (Kuru::Lifecycle::stopping.load()) {
+        if (gOriginalCallFunction) gOriginalCallFunction(caller, stack, result, function);
+        return;
+    }
                             /*
     static bool firstCall = true;
     if (firstCall) {
@@ -460,6 +473,10 @@ void DetourCallFunction(Kuru::SDK::UObject* caller, Kuru::SDK::FFrame* stack, vo
 
 // Stack.Node is the function, Stack.Locals holds its params.
 std::int64_t DetourProcessInternal(void* rcx, void* frame, void* r8, void* r9) {
+    Kuru::Lifecycle::Activity::Scope activity(gActivity);
+    if (Kuru::Lifecycle::stopping.load()) {
+        return gOriginalProcessInternal ? gOriginalProcessInternal(rcx, frame, r8, r9) : 0;
+    }
     /*
     static bool firstCall = true;
     if (firstCall) {
@@ -537,7 +554,7 @@ void WarnIfOverridden(Kuru::SDK::UFunction* hooked, const char* name) {
 
 Kuru::HookHandle RegisterHook(const char* functionFullName, Kuru::HookTiming timing,
                               Kuru::HookDispatch dispatch, Kuru::HookCallbackFn cb, void* user) {
-    if (!functionFullName || !cb) {
+    if (Kuru::Lifecycle::stopping.load() || !functionFullName || !cb) {
         return 0;
     }
     Kuru::SDK::UFunction* function = Kuru::SDK::UObject::FindFunction(functionFullName);
@@ -595,7 +612,7 @@ std::atomic<Kuru::HookHandle> gNextListenerHandle{0x8000000000000000ull};  // hi
 
 Kuru::HookHandle RegisterListener(const char* identifier, const char* listenerName,
                                   Kuru::ListenerThunkFn thunk, void* user, const char* filter, int priority) {
-    if (!identifier || !thunk) {
+    if (Kuru::Lifecycle::stopping.load() || !identifier || !thunk) {
         return 0;
     }
     const Kuru::HookHandle handle = gNextListenerHandle++;
@@ -618,7 +635,8 @@ void UnregisterListener(Kuru::HookHandle handle) {
 }
 
 void DispatchEvent(const char* identifier, const char* filter, void* payload) {
-    if (!identifier) {
+    Kuru::Lifecycle::Activity::Scope activity(gActivity);
+    if (Kuru::Lifecycle::stopping.load() || !identifier) {
         return;
     }
     const std::string want = filter ? filter : "";
@@ -637,6 +655,7 @@ void DispatchEvent(const char* identifier, const char* filter, void* payload) {
     }
     std::vector<Kuru::HookHandle> faulted;
     for (const Listener& l : matched) {  // fire outside the lock: a listener may register/dispatch reentrantly
+        if (Kuru::Lifecycle::stopping.load()) break;
         if (!SafeInvokeListener(l.thunk, payload, l.user)) {
             Log(std::string("event listener faulted for ") + identifier + ", removing it");
             faulted.push_back(l.handle);  // a listener that access-violates once will keep doing it: evict it
@@ -721,6 +740,15 @@ void Shutdown() {
     gProcessInternalHook.Remove();
     gCallFunctionHook.Remove();
 }
+
+bool Disable() {
+    const bool pe = gProcessEventHook.Disable();
+    const bool pi = gProcessInternalHook.Disable();
+    const bool cf = gCallFunctionHook.Disable();
+    return pe && pi && cf;
+}
+
+bool WaitForIdle() { return gActivity.WaitForIdle(); }
 
 const Kuru::HostApi* Api() {
     return &gApi;

@@ -12,6 +12,8 @@ void PumpFromGameThread();     // game thread (from the PE detour): runs the tic
 void EnqueueGameThread(std::function<void()> fn);           // run once, next game-thread tick
 void EnqueueTimeout(std::function<void()> fn, float seconds); // run once after a delay
 [[nodiscard]] bool IsGameThread();
+// Drops pending user work, then runs host teardown on the established dispatcher thread.
+void RequestShutdown(std::function<void()> teardown);
 
 // HostApi glue (C ABI) pushed to mods.
 void HostExecute(void (*thunk)(void* user), void* user);

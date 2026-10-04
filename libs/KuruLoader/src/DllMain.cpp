@@ -8,6 +8,8 @@
 #include "HookEngine.hpp"
 #include "ModRegistry.hpp"
 #include "Variables.hpp"
+#include "ThreadBridge.hpp"
+#include "Lifecycle.hpp"
 
 #include <Core/Flags.hpp>
 #include <Core/Globals.hpp>
@@ -22,6 +24,7 @@
 #include <Kuru/Common/Unreal.hpp>
 
 #include <windows.h>
+#include <tlhelp32.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -35,6 +38,11 @@
 namespace {
 
 HMODULE gSelfModule = nullptr;
+std::atomic<bool> gEjectRequested{false};
+std::atomic<bool> gHostReady{false};
+bool gOrderlyShutdown = false;
+HANDLE gTeardownDone = nullptr;
+std::atomic<bool> gTeardownOk{false};
 void* gProcessEventAddress = nullptr; // slot 67
 void** gVTable = nullptr;                // a live UObject vtable
 constexpr int kCallFunctionVTableIndex = 76;
@@ -508,16 +516,134 @@ void UnloadAllMods() {
     // Reverse order so later mods tear down before the ones they may depend on.
     for (const auto & mod : std::views::reverse(mods)) {
         if (mod.instance) {
-            mod.instance->OnUnload();
+            Kuru::ModRegistry::SetCurrentMod(mod.instance);
+            if (mod.enabled) mod.instance->OnUnload();
+            Kuru::HookEngine::RemoveHooksForMod(mod.instance);
+            Kuru::Console::RemoveCommandsForMod(mod.instance);
+            Kuru::Variables::RemoveCVarsForMod(mod.instance);
             if (mod.destroy) {
                 mod.destroy(mod.instance);
             }
+            Kuru::ModRegistry::SetCurrentMod(nullptr);
         }
         if (mod.dll) {
             FreeLibrary(static_cast<HMODULE>(mod.dll));
         }
     }
     mods.clear();
+}
+
+bool WaitForThreadsOutsideLoader() {
+    const auto begin = reinterpret_cast<std::uintptr_t>(gSelfModule);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(begin);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(begin + dos->e_lfanew);
+    const auto end = begin + nt->OptionalHeader.SizeOfImage;
+    const ULONGLONG deadline = GetTickCount64() + 5000;
+    do {
+        HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if (snapshot == INVALID_HANDLE_VALUE) return false;
+        THREADENTRY32 entry{};
+        entry.dwSize = sizeof(entry);
+        bool clear = true;
+        if (!Thread32First(snapshot, &entry)) {
+            CloseHandle(snapshot);
+            return false;
+        }
+        do {
+            if (entry.th32OwnerProcessID != GetCurrentProcessId() ||
+                entry.th32ThreadID == GetCurrentThreadId()) continue;
+            HANDLE thread = OpenThread(SYNCHRONIZE | THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT |
+                                       THREAD_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ThreadID);
+            if (!thread) {
+                // A thread may exit between enumeration and OpenThread.
+                if (GetLastError() != ERROR_INVALID_PARAMETER) clear = false;
+                continue;
+            }
+            if (SuspendThread(thread) == static_cast<DWORD>(-1)) {
+                if (WaitForSingleObject(thread, 0) != WAIT_OBJECT_0) clear = false;
+            } else {
+                CONTEXT context{};
+                context.ContextFlags = CONTEXT_CONTROL;
+                const bool gotContext = GetThreadContext(thread, &context) != FALSE;
+                const bool resumed = ResumeThread(thread) != static_cast<DWORD>(-1);
+                if (!gotContext || !resumed || (context.Rip >= begin && context.Rip < end)) clear = false;
+            }
+            CloseHandle(thread);
+        } while (Thread32Next(snapshot, &entry));
+        CloseHandle(snapshot);
+        if (clear) return true;
+        Sleep(1);
+    } while (GetTickCount64() < deadline);
+    return false;
+}
+
+DWORD WINAPI EjectThread(LPVOID) {
+    while (!gHostReady.load()) Sleep(1);
+    Kuru::Lifecycle::stopping.store(true);
+    auto fail = [](const char* reason) {
+        Log(std::string("eject stopped: ") + reason +
+            ". Kuru remains resident with shutdown requested, restart Rocket League before reinjecting.");
+    };
+    // Drain builders first so initialization cannot race window restoration.
+    if (!Kuru::Gui::WaitForIdle() || !Kuru::Gui::DetachWindow()) {
+        fail("could not detach the overlay window (busy window or another subclass)");
+        return 1;
+    }
+    if (!Kuru::Gui::Disable() || !Kuru::Gui::WaitForIdle() || !Kuru::HookEngine::WaitForIdle()) {
+        fail("could not stop/drain overlay and engine callbacks");
+        return 1;
+    }
+    gTeardownDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!gTeardownDone) {
+        fail("could not create teardown completion event");
+        return 1;
+    }
+    Kuru::ThreadBridge::RequestShutdown([] {
+        try {
+            Kuru::Gui::RestoreCursorForShutdown();
+            UnloadAllMods();
+            gTeardownOk.store(true);
+        } catch (...) {
+            Kuru::ModRegistry::SetCurrentMod(nullptr);
+            Log("eject: mod teardown threw; retaining Kuru");
+        }
+        SetEvent(gTeardownDone);
+    });
+    // If the dispatcher isn't running, keep the module/event alive: the task may run later.
+    if (WaitForSingleObject(gTeardownDone, 10000) != WAIT_OBJECT_0 || !gTeardownOk.load()) {
+        fail("game-thread teardown did not complete successfully");
+        return 1;
+    }
+    if (!Kuru::HookEngine::Disable() || !Kuru::HookEngine::WaitForIdle() || !Kuru::Gui::WaitForIdle()) {
+        fail("could not disable/drain detours");
+        return 1;
+    }
+    if (!WaitForThreadsOutsideLoader()) {
+        fail("another thread is still executing loader code or could not be inspected");
+        return 1;
+    }
+    Kuru::Gui::Shutdown();
+    Kuru::HookEngine::Shutdown();
+    Kuru::SDK::Shutdown();
+    CloseHandle(gTeardownDone);
+    gTeardownDone = nullptr;
+    Log("Kuru ejected");
+    gOrderlyShutdown = true;
+    FreeLibraryAndExitThread(gSelfModule, 0);
+}
+
+void RequestEject(const char*, void*) {
+    if (gEjectRequested.exchange(true)) {
+        Log("eject already requested");
+        return;
+    }
+    Log("eject requested, stopping Kuru");
+    if (HANDLE thread = CreateThread(nullptr, 0, EjectThread, nullptr, 0, nullptr)) {
+        CloseHandle(thread);
+    } else {
+        gEjectRequested.store(false);
+        Log("eject failed: could not start shutdown worker");
+    }
 }
 
 
@@ -565,6 +691,8 @@ DWORD WINAPI HostThread(LPVOID) {
         Log("ProcessInternal NOT resolved");
     }
     Kuru::Gui::Install();
+    Kuru::Console::RegisterCommand("eject", "unload Kuru and its mods from Rocket League", &RequestEject, nullptr);
+    gHostReady.store(true);
     return 0;
 }
 
@@ -583,6 +711,7 @@ BOOL APIENTRY DllMain(const HMODULE module, const DWORD reason, const LPVOID res
         }
         break;
     case DLL_PROCESS_DETACH:
+        if (gOrderlyShutdown) break; // cleanup already completed outside the loader lock
         // reserved != nullptr means the process is terminating: other threads are already gone
         if (reserved != nullptr) {
             break;

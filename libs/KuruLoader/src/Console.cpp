@@ -1,6 +1,7 @@
 #include "Console.hpp"
 
 #include "ModRegistry.hpp"
+#include "Lifecycle.hpp"
 #include "Storage.hpp"
 
 #include <imgui.h>
@@ -113,7 +114,7 @@ void AddLog(const char* message) {
 }
 
 void RegisterCommand(const char* name, const char* help, const CommandFn fn, void* user) {
-    if (!name || !fn) {
+    if (Kuru::Lifecycle::stopping.load() || !name || !fn) {
         return;
     }
     void* owner = Kuru::ModRegistry::CurrentMod();
@@ -129,6 +130,7 @@ void RemoveCommandsForMod(const void* mod) {
 }
 
 void Execute(const std::string& commandLine) {
+    if (Kuru::Lifecycle::stopping.load()) return;
     gScrollToBottom = true;  // jump to the newest output at once, so the command's result is visible
     {
         std::scoped_lock lock(gMutex);

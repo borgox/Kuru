@@ -1,6 +1,7 @@
 #include "ThreadBridge.hpp"
 
 #include "ModRegistry.hpp"
+#include "Lifecycle.hpp"
 
 #include <Kuru/Mod.hpp>
 
@@ -19,6 +20,7 @@ std::atomic<unsigned long> gGameThreadId{0};
 
 std::mutex gMutex;
 std::vector<std::function<void()>> gTasks;
+std::function<void()> gShutdownTask;
 
 struct Timeout {
     std::function<void()> fn;
@@ -40,6 +42,18 @@ void NotifyPresent() {
 }
 
 void PumpFromGameThread() {
+    if (Kuru::Lifecycle::stopping.load()) {
+        const auto threadId = gGameThreadId.load();
+        if (threadId == 0 || threadId != GetCurrentThreadId()) return;
+        std::function<void()> teardown;
+        {
+            std::scoped_lock lock(gMutex);
+            teardown = std::move(gShutdownTask);
+            gShutdownTask = {};
+        }
+        if (teardown) teardown();
+        return;
+    }
     // Cheap on the hot path: most PE calls between frames just do this atomic and return.
     if (!gTickPending.exchange(false, std::memory_order_relaxed)) {
         return;
@@ -57,6 +71,7 @@ void PumpFromGameThread() {
         tasks.swap(gTasks);
     }
     for (auto& task : tasks) {
+        if (Kuru::Lifecycle::stopping.load()) break;
         try { task(); } catch (...) {}
     }
 
@@ -74,11 +89,13 @@ void PumpFromGameThread() {
         }
     }
     for (auto& task : due) {
+        if (Kuru::Lifecycle::stopping.load()) break;
         try { task(); } catch (...) {}
     }
 
     // Mod OnUpdate (game thread, once per frame).
     for (const Kuru::ModRegistry::Entry& mod : Kuru::ModRegistry::Entries()) {
+        if (Kuru::Lifecycle::stopping.load()) break;
         if (mod.instance && mod.enabled) {
             try { mod.instance->OnUpdate(dt); } catch (...) {}
         }
@@ -87,11 +104,13 @@ void PumpFromGameThread() {
 
 void EnqueueGameThread(std::function<void()> fn) {
     std::scoped_lock lock(gMutex);
+    if (Kuru::Lifecycle::stopping.load()) return;
     gTasks.push_back(std::move(fn));
 }
 
 void EnqueueTimeout(std::function<void()> fn, float seconds) {
     std::scoped_lock lock(gMutex);
+    if (Kuru::Lifecycle::stopping.load()) return;
     gTimeouts.push_back({std::move(fn), NowSeconds() + seconds});
 }
 
@@ -113,6 +132,13 @@ void HostSetTimeout(void (*thunk)(void*), void* user, float seconds) {
 
 bool HostIsGameThread() {
     return IsGameThread();
+}
+
+void RequestShutdown(std::function<void()> teardown) {
+    std::scoped_lock lock(gMutex);
+    gTasks.clear();
+    gTimeouts.clear();
+    gShutdownTask = std::move(teardown);
 }
 
 } // namespace Kuru::ThreadBridge

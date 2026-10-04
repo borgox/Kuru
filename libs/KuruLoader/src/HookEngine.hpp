@@ -16,6 +16,8 @@ bool InstallCallFunction(void* address);           // slot 76 CallFunction (UFun
 void SetGNatives(void* table);                     // interpreter opcode->handler table (for CF arg reading)
 void SetInterpreterGlobals(void* gProperty, void* gPropAddr, void* gPropObject, void* gRuntimeUCFlags);
 void Shutdown();
+bool Disable();
+bool WaitForIdle();
 
 // The API table pushed into each mod (via KuruInitHostApi).
 [[nodiscard]] const Kuru::HostApi* Api();

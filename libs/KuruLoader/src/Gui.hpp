@@ -10,6 +10,10 @@ namespace Kuru::Gui {
 
 bool Install();
 void Shutdown();
+bool DetachWindow();
+bool Disable();
+bool WaitForIdle();
+void RestoreCursorForShutdown(); // dispatcher thread, before mods/game bindings go away
 
 // The host calls this callback inside its ImGui frame so mods can draw (their OnRender()).
 void SetModRenderer(std::function<void()> renderer);
