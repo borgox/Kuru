@@ -11,6 +11,11 @@
 
 #include <Kuru/Mod.hpp>
 
+#include <Core/Globals.hpp>
+#include <Core/ObjectModel.hpp>
+#include <Core/Script.hpp>
+#include <Engine/World.hpp>
+
 #include "Hook.hpp"
 #include <d3d11.h>
 #include <dxgi.h>
@@ -86,6 +91,11 @@ std::vector<ImDrawList*> gPresentLists;   // render-thread pool of draw lists th
 // The frame is built on the window thread
 constexpr UINT WM_KURU_BUILD = WM_APP + 0x4B55;  // 'KU'
 std::atomic<bool> gBuildPending{false};
+
+// TEMP diagnostics: how many raw input messages actually reach our WndProc.
+std::atomic<int> gDiagLbDown{0};
+std::atomic<int> gDiagMouseMove{0};
+std::atomic<int> gDiagWmInput{0};
 
 void BuildOverlayFrame();  // defined below; runs on the window thread
 
@@ -182,12 +192,95 @@ bool IsMessageCritical(UINT msg) {
     }
 }
 
-bool IsMouseInput(UINT msg) {
-    return msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST;
+void FeedRawMouseButtons(LPARAM lParam) {
+    RAWINPUT raw{};
+    UINT size = sizeof(raw);
+    if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, &raw, &size,
+                        sizeof(RAWINPUTHEADER)) == static_cast<UINT>(-1) ||
+        raw.header.dwType != RIM_TYPEMOUSE) {
+        return;
+    }
+    const RAWMOUSE& m = raw.data.mouse;
+    ImGuiIO& io = ImGui::GetIO();
+    const USHORT flags = m.usButtonFlags;
+    if (flags & RI_MOUSE_LEFT_BUTTON_DOWN)   io.AddMouseButtonEvent(0, true);
+    if (flags & RI_MOUSE_LEFT_BUTTON_UP)     io.AddMouseButtonEvent(0, false);
+    if (flags & RI_MOUSE_RIGHT_BUTTON_DOWN)  io.AddMouseButtonEvent(1, true);
+    if (flags & RI_MOUSE_RIGHT_BUTTON_UP)    io.AddMouseButtonEvent(1, false);
+    if (flags & RI_MOUSE_MIDDLE_BUTTON_DOWN) io.AddMouseButtonEvent(2, true);
+    if (flags & RI_MOUSE_MIDDLE_BUTTON_UP)   io.AddMouseButtonEvent(2, false);
+    if (flags & RI_MOUSE_WHEEL) {
+        io.AddMouseWheelEvent(0.0f, static_cast<float>(static_cast<SHORT>(m.usButtonData)) /
+                                        static_cast<float>(WHEEL_DELTA));
+    }
+}
+
+DWORD RawInputDeviceType(LPARAM lParam) {
+    RAWINPUTHEADER header{};
+    UINT size = sizeof(header);
+    if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_HEADER, &header, &size,
+                        sizeof(RAWINPUTHEADER)) == static_cast<UINT>(-1)) {
+        return static_cast<DWORD>(-1);
+    }
+    return header.dwType;
+}
+
+bool IsMouseInput(UINT msg, LPARAM lParam) {
+    if (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) {
+        return true;
+    }
+    return msg == WM_INPUT && RawInputDeviceType(lParam) == RIM_TYPEMOUSE;
 }
 
 bool IsKeyboardInput(UINT msg) {
     return msg >= WM_KEYFIRST && msg <= WM_KEYLAST;
+}
+
+void SetGameHardwareCursor(bool visible) {
+    using namespace Kuru::SDK;
+    static UFunction* getEngineFn = UObject::FindFunction("Engine.Engine.GetEngine");
+    static UFunction* setFn = [] {
+        UFunction* f = UObject::FindFunction("ProjectX.GameViewportClient_X.SetHardwareMouseCursorVisibility");
+        return f ? f : UObject::FindFunction("Engine.GameViewportClient.SetHardwareMouseCursorVisibility");
+    }();
+    if (!getEngineFn || !getEngineFn->Func || !setFn) {
+        return;
+    }
+    std::uint8_t endParms[8] = {};
+    FStateFrame frame{};
+    frame.Frame.Node = reinterpret_cast<UStruct*>(getEngineFn);
+    frame.Frame.Object = getEngineFn;
+    frame.Frame.Code = endParms;
+    UEngine* engine = nullptr;
+    getEngineFn->Func(getEngineFn, frame, &engine);
+    if (!engine || !engine->GameViewport) {
+        return;
+    }
+    struct Params {
+        std::uint32_t bIsVisible;
+    } params{visible ? 1u : 0u};
+    engine->GameViewport->ProcessEvent(setFn, &params);
+}
+
+// On close, let GFxEngine recompute the correct cursor state
+void RestoreGameCursor() {
+    using namespace Kuru::SDK;
+    static UClass* gfxClass = UObject::FindClass("ProjectX.GFxEngine_X");
+    static UFunction* updateFn =
+        UObject::FindFunction("ProjectX.GFxEngine_X.UpdateHardwareMouseCursorVisibility");
+    if (!gfxClass || !updateFn) {
+        return;
+    }
+    auto* objects = GetGlobalObjects();
+    if (!objects) {
+        return;
+    }
+    for (UObject* object : *objects) {
+        if (object && object->IsA(gfxClass) && !object->IsTemplate()) {
+            object->ProcessEvent(updateFn, nullptr);
+            return;
+        }
+    }
 }
 
 LRESULT __stdcall DetourWndProc(HWND window, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -197,6 +290,9 @@ LRESULT __stdcall DetourWndProc(HWND window, UINT msg, WPARAM wParam, LPARAM lPa
         BuildOverlayFrame();
         return 0;
     }
+    if (msg == WM_LBUTTONDOWN) gDiagLbDown.fetch_add(1, std::memory_order_relaxed);
+    else if (msg == WM_MOUSEMOVE) gDiagMouseMove.fetch_add(1, std::memory_order_relaxed);
+    else if (msg == WM_INPUT) gDiagWmInput.fetch_add(1, std::memory_order_relaxed);
     // Non-input/structural messages, and anything before the overlay is ready, go straight to the game.
     if (IsMessageCritical(msg) || !gInitialized.load(std::memory_order_acquire)) {
         return CallWindowProcW(gOriginalWndProc, window, msg, wParam, lParam);
@@ -215,6 +311,11 @@ LRESULT __stdcall DetourWndProc(HWND window, UINT msg, WPARAM wParam, LPARAM lPa
 
     ImGui_ImplWin32_WndProcHandler(window, msg, wParam, lParam);
 
+    // RL delivers the mouse only as raw input, so feed ImGui the button/wheel events ourselves.
+    if (msg == WM_INPUT) {
+        FeedRawMouseButtons(lParam);
+    }
+
     // F2/F3 toggle the menu/console. Bit 30 of lParam filters out auto-repeat. Consume them.
     if (msg == WM_KEYDOWN && (HIWORD(lParam) & KF_REPEAT) == 0) {
         if (wParam == VK_F2) {
@@ -229,7 +330,7 @@ LRESULT __stdcall DetourWndProc(HWND window, UINT msg, WPARAM wParam, LPARAM lPa
 
     // Keep from the game only the input ImGui is actually using
     const ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureMouse && IsMouseInput(msg)) {
+    if (io.WantCaptureMouse && IsMouseInput(msg, lParam)) {
         return DefWindowProcW(window, msg, wParam, lParam);
     }
     if (io.WantCaptureKeyboard && IsKeyboardInput(msg)) {
@@ -298,8 +399,24 @@ void BuildOverlayFrame() {
     if (!gInitialized.load(std::memory_order_acquire)) {
         return;
     }
+    static bool lastUiOpen = false;
+    const bool uiOpen = gMenuOpen.load(std::memory_order_relaxed) ||
+                        gConsoleOpen.load(std::memory_order_relaxed);
+    if (uiOpen) {
+        SetGameHardwareCursor(true);
+    } else if (lastUiOpen) {
+        RestoreGameCursor();
+    }
+    lastUiOpen = uiOpen;
+
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
+    {
+        ImGuiIO& pio = ImGui::GetIO();
+        pio.AddMouseButtonEvent(0, (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0);
+        pio.AddMouseButtonEvent(1, (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0);
+        pio.AddMouseButtonEvent(2, (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0);
+    }
     ImGui::NewFrame();
 
     // Always-on indicator so the overlay is visibly alive even before opening the menu.
