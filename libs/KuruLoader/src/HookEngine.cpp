@@ -15,6 +15,7 @@
 #include <cstring>
 
 #include "Hook.hpp"
+#include <ankerl/unordered_dense.h>
 #include <windows.h>
 
 #include <algorithm>
@@ -23,7 +24,6 @@
 #include <memory>
 #include <mutex>
 #include <string>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -90,36 +90,9 @@ struct HookEntry {
     Kuru::HookDispatch dispatch;  // which layer this hook wants
 };
 
-class HookMap {
-public:
-    using value_type = std::pair<Kuru::SDK::UFunction*, std::vector<HookEntry>>;
-    using iterator = std::vector<value_type>::iterator;
-    using const_iterator = std::vector<value_type>::const_iterator;
 
-    iterator begin() noexcept { return entries_.begin(); }
-    iterator end() noexcept { return entries_.end(); }
-    [[nodiscard]] const_iterator begin() const noexcept { return entries_.begin(); }
-    [[nodiscard]] const_iterator end() const noexcept { return entries_.end(); }
+using HookMap = ankerl::unordered_dense::map<Kuru::SDK::UFunction*, std::vector<HookEntry>>;
 
-    [[nodiscard]] const_iterator find(Kuru::SDK::UFunction* key) const {
-        const auto it = std::lower_bound(entries_.begin(), entries_.end(), key, Less);
-        return (it != entries_.end() && it->first == key) ? it : entries_.end();
-    }
-    [[nodiscard]] std::size_t count(Kuru::SDK::UFunction* key) const {
-        return find(key) != entries_.end() ? 1 : 0;
-    }
-    std::vector<HookEntry>& operator[](Kuru::SDK::UFunction* key) {
-        auto it = std::lower_bound(entries_.begin(), entries_.end(), key, Less);
-        if (it == entries_.end() || it->first != key) {
-            it = entries_.insert(it, value_type{key, {}});
-        }
-        return it->second;
-    }
-
-private:
-    static bool Less(const value_type& entry, Kuru::SDK::UFunction* key) { return entry.first < key; }
-    std::vector<value_type> entries_;  // sorted ascending by first (the UFunction*)
-};
 struct HookTables {
     HookMap pre;
     HookMap post;
@@ -232,7 +205,7 @@ void TraceProcessEvent(Kuru::SDK::UFunction* function) {
         firstCall = false;
         Log("ProcessEvent detour is FIRING (interception works)");
     }
-    static std::unordered_map<Kuru::SDK::UFunction*, bool> classified;
+    static ankerl::unordered_dense::map<Kuru::SDK::UFunction*, bool> classified;
     if (classified.find(function) == classified.end()) {
         const std::string path = function ? function->GetPathName() : std::string();
         // Widen the net
@@ -606,7 +579,7 @@ struct Listener {
     int priority;      // higher fires first
     std::string filter;
 };
-std::unordered_map<std::string, std::vector<Listener>> gListeners;  // keyed by event identifier
+ankerl::unordered_dense::map<std::string, std::vector<Listener>> gListeners;  // keyed by event identifier
 std::mutex gListenerMutex;
 
 // SEH-guarded listener call (same rationale as SafeInvokeHook: contain access violations from mod code).

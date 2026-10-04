@@ -45,6 +45,10 @@ FetchContent_MakeAvailable(iconfontcppheaders)
 add_library(iconfonts INTERFACE)
 target_include_directories(iconfonts INTERFACE ${iconfontcppheaders_SOURCE_DIR})
 
+# ankerl::unordered_dense, MIT licensed. Vendored as a single header (include <ankerl/unordered_dense.h>).
+add_library(unordered_dense INTERFACE)
+target_include_directories(unordered_dense INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Lucide icon font (ISC licensed). Fetched once into the build tree; the injector ships/loads it. If the
 # download is unavailable the injector still builds and simply renders without glyphs.
 set(KURU_LUCIDE_TTF ${CMAKE_BINARY_DIR}/lucide.ttf CACHE INTERNAL "Path to the Lucide font")
