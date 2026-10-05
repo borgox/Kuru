@@ -1,4 +1,5 @@
 #include "Gui.hpp"
+#include "RawMouseInput.hpp"
 
 #include "Console.hpp"
 #include "HookEngine.hpp"
@@ -494,6 +495,7 @@ void BuildOverlayFrame() {
     }
 
     ImGui::Render();
+    Kuru::RawMouseInput::Capture(ImGui::GetIO().WantCaptureMouse);
     CaptureDrawData(ImGui::GetDrawData());
 }
 
@@ -649,6 +651,7 @@ bool Install() {
     (void)gResizeHook.Install(gResizeTarget, reinterpret_cast<void*>(&DetourResizeBuffers),
                               reinterpret_cast<void**>(&gOriginalResizeBuffers));  // optional, ok if null
     Log("GUI installed");
+    if (!Kuru::RawMouseInput::Install()) Log("raw mouse capture unavailable; GUI remains usable but game input may leak");
     return true;
 }
 
@@ -676,18 +679,20 @@ bool DetachWindow() {
 }
 
 bool Disable() {
+    const bool raw = Kuru::RawMouseInput::Disable();
     const bool present = gPresentHook.Disable();
     const bool resize = gResizeHook.Disable();
-    return present && resize;
+    return present && resize && raw;
 }
 
-bool WaitForIdle() { return gActivity.WaitForIdle(); }
+bool WaitForIdle() { return gActivity.WaitForIdle() && Kuru::RawMouseInput::WaitForIdle(); }
 
 void RestoreCursorForShutdown() {
     if (gInitialized.load()) RestoreGameCursor();
 }
 
 void Shutdown() {
+    Kuru::RawMouseInput::Shutdown();
     // Clearing this makes BuildOverlayFrame  early-return, so no new frames are built.
     const bool wasInitialized = gInitialized.exchange(false, std::memory_order_acq_rel);
     gPresentHook.Remove();

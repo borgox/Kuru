@@ -1,6 +1,7 @@
 add_library(KuruLoader SHARED
     src/DllMain.cpp
     src/HookEngine.cpp
+    src/RawMouseInput.cpp
     src/Gui.cpp
     src/Console.cpp
     src/ModRegistry.cpp
