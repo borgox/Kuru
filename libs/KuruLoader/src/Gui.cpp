@@ -10,6 +10,7 @@
 #include "Variables.hpp"
 
 #include <Kuru/Mod.hpp>
+#include <KuruSDK.hpp>
 
 #include <Core/Globals.hpp>
 #include <Core/ObjectModel.hpp>
@@ -60,6 +61,8 @@ ID3D11Device* gDevice = nullptr;
 ID3D11DeviceContext* gContext = nullptr;
 ID3D11RenderTargetView* gRenderTarget = nullptr;
 HWND gWindow = nullptr;
+IDXGISwapChain* gOverlaySwapChain = nullptr; // identity only; owned by the game
+std::recursive_mutex gImGuiMutex;
 
 std::atomic<bool> gInitialized{false};  // flipped true (release) only once the overlay is fully built
 std::atomic<bool> gMenuOpen{false};     // toggled from the window thread (WndProc), read on the game thread
@@ -95,10 +98,6 @@ constexpr UINT WM_KURU_BUILD = WM_APP + 0x4B55;  // 'KU'
 constexpr UINT WM_KURU_DETACH = WM_APP + 0x4B56;
 std::atomic<bool> gBuildPending{false};
 
-// TEMP diagnostics: how many raw input messages actually reach our WndProc.
-std::atomic<int> gDiagLbDown{0};
-std::atomic<int> gDiagMouseMove{0};
-std::atomic<int> gDiagWmInput{0};
 
 void BuildOverlayFrame();  // defined below; runs on the window thread
 
@@ -240,48 +239,20 @@ bool IsKeyboardInput(UINT msg) {
 }
 
 void SetGameHardwareCursor(bool visible) {
-    using namespace Kuru::SDK;
-    static UFunction* getEngineFn = UObject::FindFunction("Engine.Engine.GetEngine");
-    static UFunction* setFn = [] {
-        UFunction* f = UObject::FindFunction("ProjectX.GameViewportClient_X.SetHardwareMouseCursorVisibility");
-        return f ? f : UObject::FindFunction("Engine.GameViewportClient.SetHardwareMouseCursorVisibility");
-    }();
-    if (!getEngineFn || !getEngineFn->Func || !setFn) {
-        return;
+    auto* defaults = Kuru::SDK::GetDefaultObject<Kuru::RL::UGameViewportClient_X>();
+    if (defaults) {
+        if (auto* viewport = defaults->GetInstance()) {
+            viewport->SetHardwareMouseCursorVisibility(visible);
+        }
     }
-    std::uint8_t endParms[8] = {};
-    FStateFrame frame{};
-    frame.Frame.Node = reinterpret_cast<UStruct*>(getEngineFn);
-    frame.Frame.Object = getEngineFn;
-    frame.Frame.Code = endParms;
-    UEngine* engine = nullptr;
-    getEngineFn->Func(getEngineFn, frame, &engine);
-    if (!engine || !engine->GameViewport) {
-        return;
-    }
-    struct Params {
-        std::uint32_t bIsVisible;
-    } params{visible ? 1u : 0u};
-    engine->GameViewport->ProcessEvent(setFn, &params);
 }
 
-// On close, let GFxEngine recompute the correct cursor state
+// On close, let GFxEngine recompute the correct cursor state.
 void RestoreGameCursor() {
-    using namespace Kuru::SDK;
-    static UClass* gfxClass = UObject::FindClass("ProjectX.GFxEngine_X");
-    static UFunction* updateFn =
-        UObject::FindFunction("ProjectX.GFxEngine_X.UpdateHardwareMouseCursorVisibility");
-    if (!gfxClass || !updateFn) {
-        return;
-    }
-    auto* objects = GetGlobalObjects();
-    if (!objects) {
-        return;
-    }
-    for (UObject* object : *objects) {
-        if (object && object->IsA(gfxClass) && !object->IsTemplate()) {
-            object->ProcessEvent(updateFn, nullptr);
-            return;
+    auto* defaults = Kuru::SDK::GetDefaultObject<Kuru::RL::UGFxEngine_X>();
+    if (defaults) {
+        if (auto* engine = defaults->GetInstance(nullptr)) {
+            engine->UpdateHardwareMouseCursorVisibility();
         }
     }
 }
@@ -310,9 +281,6 @@ LRESULT __stdcall DetourWndProc(HWND window, UINT msg, WPARAM wParam, LPARAM lPa
         BuildOverlayFrame();
         return 0;
     }
-    if (msg == WM_LBUTTONDOWN) gDiagLbDown.fetch_add(1, std::memory_order_relaxed);
-    else if (msg == WM_MOUSEMOVE) gDiagMouseMove.fetch_add(1, std::memory_order_relaxed);
-    else if (msg == WM_INPUT) gDiagWmInput.fetch_add(1, std::memory_order_relaxed);
     // Non-input/structural messages, and anything before the overlay is ready, go straight to the game.
     if (IsMessageCritical(msg) || !gInitialized.load(std::memory_order_acquire)) {
         return CallWindowProcW(gOriginalWndProc, window, msg, wParam, lParam);
@@ -324,11 +292,13 @@ LRESULT __stdcall DetourWndProc(HWND window, UINT msg, WPARAM wParam, LPARAM lPa
     // Let ImGui set the cursor (show the arrow) while a Kuru window is open
     if (msg == WM_SETCURSOR) {
         if (uiOpen) {
+            std::scoped_lock lock(gImGuiMutex);
             return ImGui_ImplWin32_WndProcHandler(window, msg, wParam, lParam);
         }
         return CallWindowProcW(gOriginalWndProc, window, msg, wParam, lParam);
     }
 
+    std::unique_lock imguiLock(gImGuiMutex);
     ImGui_ImplWin32_WndProcHandler(window, msg, wParam, lParam);
 
     // RL delivers the mouse only as raw input, so feed ImGui the button/wheel events ourselves.
@@ -357,10 +327,12 @@ LRESULT __stdcall DetourWndProc(HWND window, UINT msg, WPARAM wParam, LPARAM lPa
         return DefWindowProcW(window, msg, wParam, lParam);
     }
 
+    imguiLock.unlock();
     return CallWindowProcW(gOriginalWndProc, window, msg, wParam, lParam);
 }
 
 void InitializeOverlay(IDXGISwapChain* swapChain) {
+    std::scoped_lock lock(gImGuiMutex);
     if (FAILED(swapChain->GetDevice(IID_PPV_ARGS(&gDevice)))) {
         return;
     }
@@ -369,6 +341,7 @@ void InitializeOverlay(IDXGISwapChain* swapChain) {
     DXGI_SWAP_CHAIN_DESC desc{};
     swapChain->GetDesc(&desc);
     gWindow = desc.OutputWindow;
+    gOverlaySwapChain = swapChain;
 
     CreateRenderTarget(swapChain);
 
@@ -416,6 +389,7 @@ void CaptureDrawData(ImDrawData* dd) {
 
 // Builds the entire ImGui frame on the game thread. Registered as the ThreadBridge per-frame builder.
 void BuildOverlayFrame() {
+    std::scoped_lock imguiLock(gImGuiMutex);
     if (!gInitialized.load(std::memory_order_acquire)) {
         return;
     }
@@ -429,7 +403,6 @@ void BuildOverlayFrame() {
     }
     lastUiOpen = uiOpen;
 
-    ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     {
         ImGuiIO& pio = ImGui::GetIO();
@@ -526,6 +499,7 @@ void BuildOverlayFrame() {
 
 // Presents the latest snapshot. Runs on the render thread, which only uploads and draws, never builds.
 void RenderSnapshot() {
+    std::scoped_lock imguiLock(gImGuiMutex);
     if (!gRenderTarget) {
         return;
     }
@@ -557,8 +531,14 @@ void RenderSnapshot() {
         drawData.CmdLists.push_back(list);
     }
 
+    ID3D11RenderTargetView* previousTargets[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+    ID3D11DepthStencilView* previousDepth = nullptr;
+    gContext->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, previousTargets, &previousDepth);
     gContext->OMSetRenderTargets(1, &gRenderTarget, nullptr);
     ImGui_ImplDX11_RenderDrawData(&drawData);
+    gContext->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, previousTargets, previousDepth);
+    for (auto* target : previousTargets) if (target) target->Release();
+    if (previousDepth) previousDepth->Release();
 
     for (int i = 0; i < listCount; ++i) {
         gPresentLists[i]->CmdBuffer.swap(s.Lists[i].Cmd);
@@ -575,12 +555,16 @@ HRESULT __stdcall DetourPresent(IDXGISwapChain* swapChain, UINT syncInterval, UI
         InitializeOverlay(swapChain);
     }
     if (gInitialized.load(std::memory_order_acquire)) {
+        if (swapChain != gOverlaySwapChain) return gOriginalPresent(swapChain, syncInterval, flags);
+        std::scoped_lock imguiLock(gImGuiMutex);
+        // All DX11 backend preparation and immediate-context work belongs to Present.
+        ImGui_ImplDX11_NewFrame();
         if (!gRenderTarget) {
             CreateRenderTarget(swapChain);
         }
         // Ask the window thread to build the next frame, then present the latest finished one.
         if (gWindow && !gBuildPending.exchange(true, std::memory_order_relaxed)) {
-            PostMessageW(gWindow, WM_KURU_BUILD, 0, 0);
+            if (!PostMessageW(gWindow, WM_KURU_BUILD, 0, 0)) gBuildPending.store(false);
         }
         RenderSnapshot();  // render thread only presents, the window thread builds
     }
@@ -590,10 +574,15 @@ HRESULT __stdcall DetourPresent(IDXGISwapChain* swapChain, UINT syncInterval, UI
 HRESULT __stdcall DetourResizeBuffers(IDXGISwapChain* swapChain, UINT bufferCount, UINT width,
                                       UINT height, DXGI_FORMAT format, UINT flags) {
     Kuru::Lifecycle::Activity::Scope activity(gActivity);
-    // Still release the backbuffer during shutdown if the game resizes before hooks are disabled.
-    if (gRenderTarget) {
-        gRenderTarget->Release();
-        gRenderTarget = nullptr;
+    if (swapChain != gOverlaySwapChain)
+        return gOriginalResizeBuffers(swapChain, bufferCount, width, height, format, flags);
+    {
+        std::scoped_lock imguiLock(gImGuiMutex);
+        // Release under the overlay lock, but never hold it across the game's resize/message processing.
+        if (gRenderTarget) {
+            gRenderTarget->Release();
+            gRenderTarget = nullptr;
+        }
     }
     return gOriginalResizeBuffers(swapChain, bufferCount, width, height, format, flags);
 }

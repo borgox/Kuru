@@ -15,6 +15,13 @@ instead. Build from source if you want to change the loader itself.
 git clone https://github.com/borgox/Kuru.git
 cd Kuru
 cmake --preset msvc-x64-debug
+cmake --build build/msvc-x64-debug --config Release --target KuruSDKGen
+```
+
+Inject `build/msvc-x64-debug/libs/KuruSDKGen/Release/KuruSDKGen.dll` into Rocket League to generate
+the reflected SDK. The loader uses its typed cursor helpers. Then build the loader:
+
+```
 cmake --build build/msvc-x64-debug --config Release --target KuruLoader
 ```
 
@@ -30,4 +37,6 @@ That is the DLL you inject. Build `Release` for anything you inject - it matches
 
 ## Other targets
 
-`KuruSDKGen` is the injectable SDK generator (a separate DLL). Building the loader doesn't need it.
+`KuruSDKGen` is the injectable SDK generator (a separate DLL). It can be built without the generated
+headers. The loader expects its output under `build/msvc-x64-debug/libs/KuruSDKGen/Release/generated-sdk`.
+For an SDK elsewhere, configure with `-DKURU_GENERATED_SDK="C:/path/to/generated-sdk"`.
