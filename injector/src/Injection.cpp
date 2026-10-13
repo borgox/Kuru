@@ -79,7 +79,8 @@ InjectResult InjectLibrary(std::uint32_t pid, const std::string& dllPath) {
         return {false, LastErrorText("VirtualAllocEx")};
     }
 
-    // Free the remote path buffer on every exit path once it exists.
+    // Free before thread creation, or after confirmed completion. If completion is
+    // unknown, leave the buffer in the target until process exit rather than free live input.
     struct RemoteFree {
         HANDLE proc;
         void* mem;
@@ -106,13 +107,24 @@ InjectResult InjectLibrary(std::uint32_t pid, const std::string& dllPath) {
         return {false, LastErrorText("CreateRemoteThread")};
     }
 
-    if (WaitForSingleObject(thread.value, 15000) == WAIT_TIMEOUT) {
-        return {false, "Injection timed out waiting for the loader to initialise"};
+    remoteFree.mem = nullptr;  // the remote thread may now be reading the path
+    const DWORD waitResult = WaitForSingleObject(thread.value, 15000);
+    if (waitResult == WAIT_TIMEOUT) {
+        return {false, "Injection timed out; the loading thread may still finish"};
     }
+    if (waitResult == WAIT_FAILED) {
+        return {false, LastErrorText("WaitForSingleObject") + " - loading completion is unknown"};
+    }
+    if (waitResult != WAIT_OBJECT_0) {
+        return {false, "Unexpected injection wait result: " + std::to_string(waitResult)};
+    }
+    remoteFree.mem = remote;  // completion confirmed: no thread can still read this argument
 
     // On x64 the thread exit code is the low 32 bits of the HMODULE LoadLibrary returned: zero means the load failed inside the target, non-zero means the module loaded.
     DWORD exitCode = 0;
-    GetExitCodeThread(thread.value, &exitCode);
+    if (!GetExitCodeThread(thread.value, &exitCode)) {
+        return {false, LastErrorText("GetExitCodeThread")};
+    }
     if (exitCode == 0) {
         return {false, "The game rejected the DLL (LoadLibrary returned null)"};
     }
