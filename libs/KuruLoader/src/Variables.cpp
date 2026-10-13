@@ -24,7 +24,7 @@ struct CVar {
 
 std::mutex gMutex;
 std::map<std::string, CVar> gCVars;          // ordered for stable listing
-std::map<std::string, std::string> gSaved;   // values loaded from disk
+std::map<std::string, std::string> gSaved;   // latest values, including inactive mods
 bool gLoaded = false;
 
 std::filesystem::path ConfigPath() {
@@ -48,8 +48,8 @@ void LoadLocked() {
 
 void SaveLocked() {
     std::ofstream out(ConfigPath(), std::ios::trunc);
-    for (const auto& [name, cvar] : gCVars) {
-        out << name << '=' << cvar.value << '\n';
+    for (const auto& [name, value] : gSaved) {
+        out << name << '=' << value << '\n';
     }
 }
 
@@ -69,6 +69,7 @@ void RegisterCVar(const char* name, const char* defaultValue, const char* descri
         value = it->second;  // restore persisted value
     }
     gCVars[name] = {value, defaultValue ? defaultValue : "", description ? description : "", owner};
+    gSaved[name] = value;
 }
 
 void HostRegisterCVar(const char* name, const char* defaultValue, const char* description) {
@@ -89,12 +90,14 @@ void SetCVar(const char* name, const char* value) {
         return;
     }
     std::scoped_lock lock(gMutex);
+    LoadLocked();
     const auto it = gCVars.find(name);
     if (it != gCVars.end()) {
         it->second.value = value ? value : "";
     } else {
         gCVars[name] = {value ? value : "", "", "", nullptr};  // ad-hoc (e.g. set from console)
     }
+    gSaved[name] = value ? value : "";
     SaveLocked();
 }
 
@@ -103,6 +106,7 @@ void DeleteCVar(const char* name) {
         return;
     }
     std::scoped_lock lock(gMutex);
+    LoadLocked();
     gCVars.erase(name);
     gSaved.erase(name);
     SaveLocked();
@@ -161,6 +165,7 @@ void Draw() {
         ImGui::SetNextItemWidth(220.0f);
         if (ImGui::InputText("##v", buf, sizeof(buf), ImGuiInputTextFlags_EnterReturnsTrue)) {
             cvar.value = buf;
+            gSaved[name] = cvar.value;
             changed = true;
         }
         ImGui::SameLine();
