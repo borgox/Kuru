@@ -59,9 +59,19 @@ struct HostApi {
                                    void* user, const char* filter, int priority);
     void (*UnregisterListener)(HookHandle handle);
     void (*DispatchEvent)(const char* identifier, const char* filter, void* eventPayload);
+    // Version 3: cleanup runs exactly once, after execution or cancellation, inside the mod.
+    void (*QueueTask)(void* owner, void (*thunk)(void*), void* user,
+                      void (*cleanup)(void*), float seconds);
+    // Version 4: host owns callback storage, including registration failure.
+    HookHandle (*RegisterOwnedHook)(const char*, HookTiming, HookDispatch, HookCallbackFn, void*, void (*)(void*));
+    void (*RegisterOwnedCommand)(const char*, const char*, CommandCallbackFn, void*, void (*)(void*));
+    HookHandle (*RegisterOwnedListener)(const char*, const char*, ListenerThunkFn, void*, const char*, int, void (*)(void*));
 };
 
-constexpr std::uint32_t HostApiVersion = 2;
+constexpr std::uint32_t HostApiVersion = 4;
+
+void SetTaskOwner(void* owner) noexcept;
+void* GetTaskOwner() noexcept;
 
 void SetHostApi(const HostApi* api) noexcept;
 [[nodiscard]] const HostApi* GetHostApi() noexcept;

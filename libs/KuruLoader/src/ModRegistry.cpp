@@ -3,12 +3,14 @@
 #include "Console.hpp"
 #include "HookEngine.hpp"
 #include "Variables.hpp"
+#include "ThreadBridge.hpp"
 
 #include <Kuru/Mod.hpp>
+#include <exception>
 
 namespace Kuru::ModRegistry {
 namespace {
-Kuru::IMod* gCurrentMod = nullptr;
+thread_local Kuru::IMod* gCurrentMod = nullptr;
 }
 
 std::vector<Entry>& Entries() {
@@ -24,45 +26,89 @@ void SetCurrentMod(Kuru::IMod* mod) {
     gCurrentMod = mod;
 }
 
-void SetEnabled(Entry& entry, bool enabled) {
-    if (entry.enabled == enabled || !entry.instance) {
-        entry.enabled = enabled;
+void RemoveRegistrations(Kuru::IMod* mod) {
+    if (!mod) return;
+    Kuru::ThreadBridge::CancelForMod(mod);
+    Kuru::HookEngine::RemoveHooksForMod(mod);  // includes event listeners
+    Kuru::Console::RemoveCommandsForMod(mod);
+    Kuru::Variables::RemoveCVarsForMod(mod);
+}
+
+namespace {
+void Enable(Entry& entry) {
+    entry.enabled = false;
+    if (!entry.instance) {
+        Console::AddLog(("mod enable failed (no instance): " + entry.name).c_str());
         return;
     }
-    entry.enabled = enabled;
-    SetCurrentMod(entry.instance);
-    if (enabled) {
-        entry.instance->OnLoad();  // re-register hooks/commands/GUI
-    } else {
-        entry.instance->OnUnload();                                   // the mod's own teardown
-        Kuru::HookEngine::RemoveHooksForMod(entry.instance);          // framework default teardown
-        Kuru::Console::RemoveCommandsForMod(entry.instance);
-        Kuru::Variables::RemoveCVarsForMod(entry.instance);
+    ScopedCurrentMod owner(entry.instance);
+    ThreadBridge::BeginForMod(entry.instance);
+    try {
+        if (entry.instance->OnLoad()) {
+            entry.enabled = true;
+            return;
+        }
+        Console::AddLog(("mod OnLoad returned false; kept disabled: " + entry.name).c_str());
+    } catch (const std::exception& error) {
+        Console::AddLog(("mod OnLoad threw; kept disabled: " + entry.name + ": " + error.what()).c_str());
+    } catch (...) {
+        Console::AddLog(("mod OnLoad threw; kept disabled: " + entry.name).c_str());
     }
-    SetCurrentMod(nullptr);
+    // A partial load does not receive OnUnload; undo host registrations and queued work.
+    RemoveRegistrations(entry.instance);
+}
+}
+
+void Deactivate(Entry& entry) {
+    const bool wasEnabled = entry.enabled;
+    entry.enabled = false;
+    if (!entry.instance) return;
+    ScopedCurrentMod owner(entry.instance);
+    ThreadBridge::CancelForMod(entry.instance);
+    if (wasEnabled) {
+        try {
+            entry.instance->OnUnload();
+        } catch (const std::exception& error) {
+            Console::AddLog(("mod OnUnload threw; continuing cleanup: " + entry.name + ": " + error.what()).c_str());
+        } catch (...) {
+            Console::AddLog(("mod OnUnload threw; continuing cleanup: " + entry.name).c_str());
+        }
+    }
+    RemoveRegistrations(entry.instance);
+}
+
+void SetEnabled(Entry& entry, bool enabled) {
+    if (!entry.instance) {
+        entry.enabled = false;
+        return;
+    }
+    if (entry.enabled == enabled) return;
+    if (enabled) {
+        Enable(entry);
+    } else {
+        Deactivate(entry);
+    }
 }
 
 void Reload(Entry& entry) {
-    if (!entry.instance || !entry.create) {
+    if (!entry.create || !entry.destroy) return;
+    Deactivate(entry);
+    if (entry.instance) {
+        ScopedCurrentMod owner(entry.instance);
+        auto* old = entry.instance;
+        entry.instance = nullptr;
+        entry.destroy(old);
+    }
+    try {
+        entry.instance = entry.create();
+    } catch (const std::exception& error) {
+        Console::AddLog(("mod creation failed; kept disabled: " + entry.name + ": " + error.what()).c_str());
+        return;
+    } catch (...) {
+        Console::AddLog(("mod creation failed; kept disabled: " + entry.name).c_str());
         return;
     }
-    // Tear down the current instance (its own OnUnload + framework cleanup of hooks/commands).
-    SetCurrentMod(entry.instance);
-    entry.instance->OnUnload();
-    Kuru::HookEngine::RemoveHooksForMod(entry.instance);
-    Kuru::Console::RemoveCommandsForMod(entry.instance);
-    Kuru::Variables::RemoveCVarsForMod(entry.instance);
-    if (entry.destroy) {
-        entry.destroy(entry.instance);
-    }
-    // Build a fresh instance from scratch — all member state resets to defaults.
-    entry.instance = entry.create();
-    entry.enabled = true;
-    SetCurrentMod(entry.instance);
-    if (entry.instance) {
-        entry.instance->OnLoad();
-    }
-    SetCurrentMod(nullptr);
+    Enable(entry);
 }
 
 } // namespace Kuru::ModRegistry

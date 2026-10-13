@@ -87,24 +87,27 @@ struct is_function_event<PostFunctionCallEvent> : std::true_type {};
 template <typename EventT, typename Fn>
 ListenerHandle Register(const char* listenerName, Fn fn, const char* filter = "", int priority = 0) {
     const HostApi* api = GetHostApi();
-    if (!api) {
+    if (!api || api->Version < 4) {
         return 0;
     }
     using Callable = std::decay_t<Fn>;
-    auto* holder = new detail::Holder<EventT, Callable>{std::move(fn)};  // freed at process exit
+    using Holder = detail::Holder<EventT, Callable>;
+    auto* holder = new Holder{std::move(fn)};
+    const auto cleanup = +[](void* user) { delete static_cast<Holder*>(user); };
     if constexpr (detail::is_function_event<EventT>::value) {
         const HookTiming timing =
             std::is_same_v<EventT, PreFunctionCallEvent> ? HookTiming::Pre : HookTiming::Post;
         (void)listenerName;
         (void)priority;
-        return api->RegisterHook(filter, timing, HookDispatch::Any, &detail::FunctionThunk<EventT, Callable>, holder);
+        if (!api->RegisterOwnedHook) { delete holder; return 0; }
+        return api->RegisterOwnedHook(filter, timing, HookDispatch::Any, &detail::FunctionThunk<EventT, Callable>, holder, cleanup);
     } else {
-        if (!api->RegisterListener) {
+        if (!api->RegisterOwnedListener) {
             delete holder;
             return 0;
         }
-        return api->RegisterListener(EventT::Identifier, listenerName, &detail::ModuleThunk<EventT, Callable>,
-                                     holder, filter, priority);
+        return api->RegisterOwnedListener(EventT::Identifier, listenerName, &detail::ModuleThunk<EventT, Callable>,
+                                          holder, filter, priority, cleanup);
     }
 }
 

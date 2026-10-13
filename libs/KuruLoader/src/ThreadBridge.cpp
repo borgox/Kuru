@@ -11,6 +11,10 @@
 #include <chrono>
 #include <mutex>
 #include <vector>
+#include <memory>
+#include <unordered_map>
+#include <unordered_set>
+#include <algorithm>
 
 namespace Kuru::ThreadBridge {
 namespace {
@@ -19,11 +23,18 @@ std::atomic<bool> gTickPending{false};
 std::atomic<unsigned long> gGameThreadId{0};
 
 std::mutex gMutex;
-std::vector<std::function<void()>> gTasks;
+struct Task {
+    void* owner;
+    std::function<void()> fn;
+};
+using TaskPtr = std::shared_ptr<Task>;
+std::vector<TaskPtr> gTasks;
+std::unordered_map<void*, std::vector<std::weak_ptr<Task>>> gOwned;
+std::unordered_set<void*> gCanceled;
 std::function<void()> gShutdownTask;
 
 struct Timeout {
-    std::function<void()> fn;
+    TaskPtr task;
     double due;
 };
 std::vector<Timeout> gTimeouts;
@@ -34,6 +45,18 @@ double NowSeconds() {
 }
 
 double gLastTick = 0.0;
+
+void RunTask(const TaskPtr& task) {
+    std::function<void()> fn;
+    {
+        std::scoped_lock lock(gMutex);
+        fn = std::move(task->fn);
+    }
+    if (fn) {
+        Kuru::ModRegistry::ScopedCurrentMod owner(static_cast<Kuru::IMod*>(task->owner));
+        try { fn(); } catch (...) {}
+    }
+}
 
 } // namespace
 
@@ -65,23 +88,23 @@ void PumpFromGameThread() {
     gLastTick = now;
 
     // Immediate tasks (Execute).
-    std::vector<std::function<void()>> tasks;
+    std::vector<TaskPtr> tasks;
     {
         std::scoped_lock lock(gMutex);
         tasks.swap(gTasks);
     }
     for (auto& task : tasks) {
         if (Kuru::Lifecycle::stopping.load()) break;
-        try { task(); } catch (...) {}
+        RunTask(task);
     }
 
     // Due timeouts.
-    std::vector<std::function<void()>> due;
+    std::vector<TaskPtr> due;
     {
         std::scoped_lock lock(gMutex);
         for (auto it = gTimeouts.begin(); it != gTimeouts.end();) {
             if (now >= it->due) {
-                due.push_back(std::move(it->fn));
+                due.push_back(std::move(it->task));
                 it = gTimeouts.erase(it);
             } else {
                 ++it;
@@ -90,28 +113,61 @@ void PumpFromGameThread() {
     }
     for (auto& task : due) {
         if (Kuru::Lifecycle::stopping.load()) break;
-        try { task(); } catch (...) {}
+        RunTask(task);
     }
 
     // Mod OnUpdate (game thread, once per frame).
     for (const Kuru::ModRegistry::Entry& mod : Kuru::ModRegistry::Entries()) {
         if (Kuru::Lifecycle::stopping.load()) break;
         if (mod.instance && mod.enabled) {
+            Kuru::ModRegistry::ScopedCurrentMod owner(mod.instance);
             try { mod.instance->OnUpdate(dt); } catch (...) {}
         }
     }
 }
 
-void EnqueueGameThread(std::function<void()> fn) {
+void Queue(std::function<void()> fn, void* owner, float seconds) {
+    auto task = std::make_shared<Task>(Task{owner, std::move(fn)});
     std::scoped_lock lock(gMutex);
-    if (Kuru::Lifecycle::stopping.load()) return;
-    gTasks.push_back(std::move(fn));
+    if (Kuru::Lifecycle::stopping.load() || (owner && gCanceled.contains(owner))) return;
+    if (owner) {
+        auto& owned = gOwned[owner];
+        std::erase_if(owned, [](const auto& weak) { return weak.expired(); });
+        owned.push_back(task);
+    }
+    if (seconds <= 0.0f) gTasks.push_back(task);
+    else gTimeouts.push_back({task, NowSeconds() + seconds});
 }
 
-void EnqueueTimeout(std::function<void()> fn, float seconds) {
+void EnqueueGameThread(std::function<void()> fn) { Queue(std::move(fn), nullptr, 0); }
+void EnqueueTimeout(std::function<void()> fn, float seconds) { Queue(std::move(fn), nullptr, seconds); }
+
+void BeginForMod(void* owner) {
     std::scoped_lock lock(gMutex);
-    if (Kuru::Lifecycle::stopping.load()) return;
-    gTimeouts.push_back({std::move(fn), NowSeconds() + seconds});
+    gCanceled.erase(owner);
+}
+
+void CancelForMod(void* owner) {
+    if (!owner) return;
+    std::vector<std::function<void()>> release;
+    {
+        std::scoped_lock lock(gMutex);
+        gCanceled.insert(owner);
+        if (auto it = gOwned.find(owner); it != gOwned.end()) {
+            for (auto& weak : it->second)
+                if (auto task = weak.lock()) release.push_back(std::move(task->fn));
+            gOwned.erase(it);
+        }
+        std::erase_if(gTasks, [owner](const auto& task) { return task->owner == owner; });
+        std::erase_if(gTimeouts, [owner](const auto& timeout) { return timeout.task->owner == owner; });
+    }
+    // Mod destructors may reenter the host. Release outside the queue lock, before DLL unload.
+}
+
+void HostQueueTask(void* owner, void (*thunk)(void*), void* user,
+                   void (*cleanup)(void*), float seconds) {
+    auto storage = std::shared_ptr<void>(user, [cleanup](void* value) { if (cleanup) cleanup(value); });
+    if (thunk) Queue([thunk, storage] { thunk(storage.get()); }, owner, seconds);
 }
 
 bool IsGameThread() {
@@ -120,13 +176,13 @@ bool IsGameThread() {
 
 void HostExecute(void (*thunk)(void*), void* user) {
     if (thunk) {
-        EnqueueGameThread([thunk, user] { thunk(user); });
+        Queue([thunk, user] { thunk(user); }, Kuru::ModRegistry::CurrentMod(), 0);
     }
 }
 
 void HostSetTimeout(void (*thunk)(void*), void* user, float seconds) {
     if (thunk) {
-        EnqueueTimeout([thunk, user] { thunk(user); }, seconds);
+        Queue([thunk, user] { thunk(user); }, Kuru::ModRegistry::CurrentMod(), seconds);
     }
 }
 
@@ -135,10 +191,21 @@ bool HostIsGameThread() {
 }
 
 void RequestShutdown(std::function<void()> teardown) {
-    std::scoped_lock lock(gMutex);
-    gTasks.clear();
-    gTimeouts.clear();
-    gShutdownTask = std::move(teardown);
+    std::vector<std::function<void()>> release;
+    std::vector<TaskPtr> tasks;
+    std::vector<Timeout> timeouts;
+    {
+        std::scoped_lock lock(gMutex);
+        for (auto& [owner, owned] : gOwned) {
+            gCanceled.insert(owner);
+            for (auto& weak : owned)
+                if (auto task = weak.lock()) release.push_back(std::move(task->fn));
+        }
+        gOwned.clear();
+        tasks.swap(gTasks);
+        timeouts.swap(gTimeouts);
+        gShutdownTask = std::move(teardown);
+    }
 }
 
 } // namespace Kuru::ThreadBridge

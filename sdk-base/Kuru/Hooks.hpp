@@ -28,12 +28,12 @@ inline void Thunk(HookContext* context, void* user) {
 inline HookHandle Register(const char* functionFullName, HookTiming timing, HookDispatch dispatch,
                            Callable callable) {
     const HostApi* api = GetHostApi();
-    if (!api || !api->RegisterHook) {
+    if (!api || api->Version < 4 || !api->RegisterOwnedHook) {
         return 0;
     }
-    // Held for the mod's lifetime, RemoveHook cleanup of the holder is a later refinement.
     auto* holder = new Callable(std::move(callable));
-    return api->RegisterHook(functionFullName, timing, dispatch, &Thunk, holder);
+    return api->RegisterOwnedHook(functionFullName, timing, dispatch, &Thunk, holder,
+                                 [](void* user) { delete static_cast<Callable*>(user); });
 }
 
 } // namespace detail

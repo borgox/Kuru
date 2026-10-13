@@ -15,6 +15,7 @@
 #include <cstring>
 
 #include "Hook.hpp"
+#include "CallbackLifetime.hpp"
 #include "Lifecycle.hpp"
 #include <ankerl/unordered_dense.h>
 #include <windows.h>
@@ -90,6 +91,7 @@ struct HookEntry {
     Kuru::HookHandle handle;
     void* owner;              // the mod that registered it (remove all of a mod's hooks on disabled)
     Kuru::HookDispatch dispatch;  // which layer this hook wants
+    std::shared_ptr<CallbackLifetime> lifetime;
 };
 
 
@@ -100,13 +102,8 @@ struct HookTables {
     HookMap post;
 };
 
-/* Copy-on-write hook tables: detours do one lock-free snapshot load, writers clone, mutate, and
- * publish under gWriteMutex. gTablesOwner keeps the active snapshot alive, and gRetiredTables keeps
- * old snapshots alive for in-flight detours.
- */
-std::shared_ptr<const HookTables> gTablesOwner = std::make_shared<const HookTables>();
-std::atomic<const HookTables*> gTablesRaw{gTablesOwner.get()};
-std::vector<std::shared_ptr<const HookTables>> gRetiredTables;
+// Each detour holds its snapshot alive; unused snapshots are reclaimed automatically.
+std::atomic<std::shared_ptr<const HookTables>> gTables{std::make_shared<const HookTables>()};
 std::mutex gWriteMutex;
 Kuru::HookHandle gNextHandle = 1;
 
@@ -171,12 +168,14 @@ void DispatchFrom(const HookMap& map, Kuru::HookContext& context, bool fireAny) 
     for (const HookEntry& entry : it->second) {
         if (Kuru::Lifecycle::stopping.load()) break;
 
+        if (entry.lifetime->removed.load()) continue;
         const bool fire = entry.dispatch == context.dispatch ||
                           (entry.dispatch == Kuru::HookDispatch::Any && fireAny);
         if (!fire) {
             continue;
         }
         // Fault isolation: a throwing or faulting mod callback must not unwind into the game's call stack.
+        Kuru::ModRegistry::ScopedCurrentMod owner(static_cast<Kuru::IMod*>(entry.owner));
         if (!SafeInvokeHook(entry.callback, &context, entry.user)) {
             Log(std::string("hook callback faulted (suppressed) on ") +
                 (context.function ? context.function->GetName() : std::string("?")));
@@ -193,12 +192,22 @@ bool HasHooks(const HookTables* tables, Kuru::SDK::UFunction* function) {
 // Serialized writers: clone the current tables, hand the clone to `mutator`, publish atomically.
 template <typename Mutator>
 void MutateTables(Mutator&& mutator) {
-    std::scoped_lock lock(gWriteMutex);
-    auto next = std::make_shared<HookTables>(*gTablesOwner);  // clone current, mutate, publish
-    mutator(*next);
-    gRetiredTables.push_back(gTablesOwner);  // an in-flight detour may still read the old pointer
-    gTablesOwner = next;
-    gTablesRaw.store(next.get(), std::memory_order_release);
+    std::shared_ptr<const HookTables> previous;
+    {
+        std::scoped_lock lock(gWriteMutex);
+        previous = gTables.load(std::memory_order_acquire);
+        auto next = std::make_shared<HookTables>(*previous);
+        mutator(*next);
+        for (HookMap* map : {&next->pre, &next->post}) {
+            for (auto it = map->begin(); it != map->end();) {
+                if (it->second.empty()) it = map->erase(it);
+                else ++it;
+            }
+        }
+        gTables.store(next, std::memory_order_release);
+    }
+    // Release previous outside the writer lock: captured destructors may reenter the host.
+
 }
 
 // Flip gTrace (declared above) to true to debug hook resolution.
@@ -237,7 +246,8 @@ void DetourProcessEvent(Kuru::SDK::UObject* caller, Kuru::SDK::UFunction* functi
         Kuru::Scanner::Record(caller, function, params);
     }
     // One lock-free snapshot for the whole call so pre/post see a consistent view.
-    const HookTables* tables = gTablesRaw.load(std::memory_order_acquire);
+    const auto snapshot = gTables.load(std::memory_order_acquire);
+    const HookTables* tables = snapshot.get();
     if (!HasHooks(tables, function)) {  // hot path: unhooked calls skip dispatch entirely
         if (gOriginalProcessEvent) gOriginalProcessEvent(caller, function, params, result);
         return;
@@ -342,7 +352,8 @@ void DetourCallFunction(Kuru::SDK::UObject* caller, Kuru::SDK::FFrame* stack, vo
         Log("CallFunction (slot 76) detour is FIRING");
     }
     */
-    const HookTables* tables = gTablesRaw.load(std::memory_order_acquire);
+    const auto snapshot = gTables.load(std::memory_order_acquire);
+    const HookTables* tables = snapshot.get();
     if (!HasHooks(tables, function)) {
         if (gOriginalCallFunction) gOriginalCallFunction(caller, stack, result, function);
         return;
@@ -489,7 +500,8 @@ std::int64_t DetourProcessInternal(void* rcx, void* frame, void* r8, void* r9) {
         function = *reinterpret_cast<Kuru::SDK::UFunction**>(
             reinterpret_cast<char*>(frame) + kProcessInternalFuncOffset);
     }
-    const HookTables* tables = gTablesRaw.load(std::memory_order_acquire);
+    const auto snapshot = gTables.load(std::memory_order_acquire);
+    const HookTables* tables = snapshot.get();
     if (!HasHooks(tables, function)) {
         return gOriginalProcessInternal ? gOriginalProcessInternal(rcx, frame, r8, r9) : 0;
     }
@@ -552,8 +564,9 @@ void WarnIfOverridden(Kuru::SDK::UFunction* hooked, const char* name) {
     }
 }
 
-Kuru::HookHandle RegisterHook(const char* functionFullName, Kuru::HookTiming timing,
-                              Kuru::HookDispatch dispatch, Kuru::HookCallbackFn cb, void* user) {
+Kuru::HookHandle RegisterOwnedHook(const char* functionFullName, Kuru::HookTiming timing,
+                              Kuru::HookDispatch dispatch, Kuru::HookCallbackFn cb, void* user, void (*cleanup)(void*)) {
+    auto lifetime = std::make_shared<CallbackLifetime>(user, cleanup);
     if (Kuru::Lifecycle::stopping.load() || !functionFullName || !cb) {
         return 0;
     }
@@ -568,11 +581,16 @@ Kuru::HookHandle RegisterHook(const char* functionFullName, Kuru::HookTiming tim
     MutateTables([&](HookTables& tables) {
         handle = gNextHandle++;
         HookMap& map = (timing == Kuru::HookTiming::Pre) ? tables.pre : tables.post;
-        map[function].push_back({cb, user, handle, owner, dispatch});
+        map[function].push_back({cb, user, handle, owner, dispatch, lifetime});
     });
     Log(std::string("hook registered [") + (timing == Kuru::HookTiming::Pre ? "pre" : "post") +
         "] " + functionFullName);
     return handle;
+}
+
+Kuru::HookHandle RegisterHook(const char* name, Kuru::HookTiming timing, Kuru::HookDispatch dispatch,
+                              Kuru::HookCallbackFn callback, void* user) {
+    return RegisterOwnedHook(name, timing, dispatch, callback, user, nullptr);
 }
 
 void RemoveHook(Kuru::HookHandle handle) {
@@ -580,7 +598,11 @@ void RemoveHook(Kuru::HookHandle handle) {
         for (HookMap* map : {&tables.pre, &tables.post}) {
             for (auto& [function, entries] : *map) {
                 entries.erase(std::remove_if(entries.begin(), entries.end(),
-                                             [handle](const HookEntry& e) { return e.handle == handle; }),
+                                             [handle](const HookEntry& e) {
+                                                 if (e.handle != handle) return false;
+                                                 e.lifetime->removed.store(true);
+                                                 return true;
+                                             }),
                               entries.end());
             }
         }
@@ -595,6 +617,7 @@ struct Listener {
     void* owner;       // registering mod (for RemoveHooksForMod cleanup)
     int priority;      // higher fires first
     std::string filter;
+    std::shared_ptr<CallbackLifetime> lifetime;
 };
 ankerl::unordered_dense::map<std::string, std::vector<Listener>> gListeners;  // keyed by event identifier
 std::mutex gListenerMutex;
@@ -610,28 +633,41 @@ bool SafeInvokeListener(Kuru::ListenerThunkFn thunk, void* payload, void* user) 
 }
 std::atomic<Kuru::HookHandle> gNextListenerHandle{0x8000000000000000ull};  // high bit: distinct from hook handles
 
-Kuru::HookHandle RegisterListener(const char* identifier, const char* listenerName,
-                                  Kuru::ListenerThunkFn thunk, void* user, const char* filter, int priority) {
+Kuru::HookHandle RegisterOwnedListener(const char* identifier, const char* listenerName,
+                                  Kuru::ListenerThunkFn thunk, void* user, const char* filter, int priority, void (*cleanup)(void*)) {
+    auto lifetime = std::make_shared<CallbackLifetime>(user, cleanup);
     if (Kuru::Lifecycle::stopping.load() || !identifier || !thunk) {
         return 0;
     }
     const Kuru::HookHandle handle = gNextListenerHandle++;
     std::scoped_lock lock(gListenerMutex);
     auto& vec = gListeners[identifier];
-    vec.push_back({thunk, user, handle, Kuru::ModRegistry::CurrentMod(), priority, filter ? filter : ""});
+    vec.push_back({thunk, user, handle, Kuru::ModRegistry::CurrentMod(), priority, filter ? filter : "", lifetime});
     std::stable_sort(vec.begin(), vec.end(),
                      [](const Listener& a, const Listener& b) { return a.priority > b.priority; });
     (void)listenerName;
     return handle;
 }
 
+Kuru::HookHandle RegisterListener(const char* identifier, const char* name, Kuru::ListenerThunkFn thunk,
+                                  void* user, const char* filter, int priority) {
+    return RegisterOwnedListener(identifier, name, thunk, user, filter, priority, nullptr);
+}
+
 void UnregisterListener(Kuru::HookHandle handle) {
-    std::scoped_lock lock(gListenerMutex);
-    for (auto& [identifier, vec] : gListeners) {
-        vec.erase(std::remove_if(vec.begin(), vec.end(),
-                                 [handle](const Listener& l) { return l.handle == handle; }),
-                  vec.end());
+    std::vector<Listener> removed;
+    {
+        std::scoped_lock lock(gListenerMutex);
+        for (auto& [identifier, vec] : gListeners) {
+            std::erase_if(vec, [&](const Listener& listener) {
+                if (listener.handle != handle) return false;
+                listener.lifetime->removed.store(true);
+                removed.push_back(listener);
+                return true;
+            });
+        }
     }
+
 }
 
 void DispatchEvent(const char* identifier, const char* filter, void* payload) {
@@ -656,24 +692,15 @@ void DispatchEvent(const char* identifier, const char* filter, void* payload) {
     std::vector<Kuru::HookHandle> faulted;
     for (const Listener& l : matched) {  // fire outside the lock: a listener may register/dispatch reentrantly
         if (Kuru::Lifecycle::stopping.load()) break;
+        if (l.lifetime->removed.load()) continue;
+        Kuru::ModRegistry::ScopedCurrentMod owner(static_cast<Kuru::IMod*>(l.owner));
         if (!SafeInvokeListener(l.thunk, payload, l.user)) {
             Log(std::string("event listener faulted for ") + identifier + ", removing it");
             faulted.push_back(l.handle);  // a listener that access-violates once will keep doing it: evict it
         }
     }
-    if (!faulted.empty()) {
-        std::scoped_lock lock(gListenerMutex);
-        const auto it = gListeners.find(identifier);
-        if (it != gListeners.end()) {
-            auto& vec = it->second;
-            vec.erase(std::remove_if(vec.begin(), vec.end(),
-                                     [&faulted](const Listener& l) {
-                                         return std::find(faulted.begin(), faulted.end(), l.handle) !=
-                                                faulted.end();
-                                     }),
-                      vec.end());
-        }
-    }
+    for (auto handle : faulted) UnregisterListener(handle);
+
 }
 
 Kuru::HostApi gApi{Kuru::HostApiVersion, &RegisterHook, &RemoveHook,
@@ -685,7 +712,9 @@ Kuru::HostApi gApi{Kuru::HostApiVersion, &RegisterHook, &RemoveHook,
                    &Kuru::Storage::HostGetModDataDir,
                    &Kuru::Variables::HostRegisterCVar, &Kuru::Variables::GetCVar,
                    &Kuru::Variables::SetCVar, &SuppressOverrideWarnings,
-                   &RegisterListener, &UnregisterListener, &DispatchEvent};
+                   &RegisterListener, &UnregisterListener, &DispatchEvent,
+                   &Kuru::ThreadBridge::HostQueueTask, &RegisterOwnedHook,
+                   &Kuru::Console::RegisterOwnedCommand, &RegisterOwnedListener};
 
 } // namespace
 
@@ -759,21 +788,31 @@ void RemoveHooksForMod(void* mod) {
         for (HookMap* map : {&tables.pre, &tables.post}) {
             for (auto& [function, entries] : *map) {
                 entries.erase(std::remove_if(entries.begin(), entries.end(),
-                                             [mod](const HookEntry& e) { return e.owner == mod; }),
+                                             [mod](const HookEntry& e) {
+                                                 if (e.owner != mod) return false;
+                                                 e.lifetime->removed.store(true);
+                                                 return true;
+                                             }),
                               entries.end());
             }
         }
     });
+    std::vector<Listener> removed;
     {
-        std::scoped_lock lock(gListenerMutex);  // drop this mod's event listeners too
+        std::scoped_lock lock(gListenerMutex);
         for (auto& [identifier, vec] : gListeners) {
-            vec.erase(std::remove_if(vec.begin(), vec.end(),
-                                     [mod](const Listener& l) { return l.owner == mod; }),
-                      vec.end());
+            std::erase_if(vec, [&](const Listener& listener) {
+                if (listener.owner != mod) return false;
+                listener.lifetime->removed.store(true);
+                removed.push_back(listener);
+                return true;
+            });
         }
     }
-    std::scoped_lock lock(gOptOutMutex);
-    gOverrideWarnOptOut.erase(mod);  // reset the opt-out so a reloaded mod warns again
+    {
+        std::scoped_lock lock(gOptOutMutex);
+        gOverrideWarnOptOut.erase(mod);  // a reloaded mod should warn again
+    }
 }
 
 } // namespace Kuru::HookEngine

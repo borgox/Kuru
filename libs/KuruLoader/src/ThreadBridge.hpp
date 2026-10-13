@@ -2,7 +2,7 @@
 
 #include <functional>
 
-// Thread bridge: lets render-thread code (GUI) and mods schedule work onto the GAME thread.
+// Thread bridge: schedules host and mod work onto the game thread.
 
 namespace Kuru::ThreadBridge {
 
@@ -14,6 +14,10 @@ void EnqueueTimeout(std::function<void()> fn, float seconds); // run once after 
 [[nodiscard]] bool IsGameThread();
 // Drops pending user work, then runs host teardown on the established dispatcher thread.
 void RequestShutdown(std::function<void()> teardown);
+void CancelForMod(void* owner);
+void BeginForMod(void* owner);
+void HostQueueTask(void* owner, void (*thunk)(void*), void* user,
+                   void (*cleanup)(void*), float seconds);
 
 // HostApi glue (C ABI) pushed to mods.
 void HostExecute(void (*thunk)(void* user), void* user);

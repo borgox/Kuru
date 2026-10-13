@@ -31,10 +31,28 @@ std::vector<Entry>& Entries();
 Kuru::IMod* CurrentMod();
 void SetCurrentMod(Kuru::IMod* mod);
 
-// Enable/disable a mod live. Disabling calls OnUnload + removes the mod's hooks/commands; enabling re-runs OnLoad.
+// Preserve ownership across nested callbacks and keep different threads independent.
+class ScopedCurrentMod {
+public:
+    explicit ScopedCurrentMod(Kuru::IMod* mod) : previous_(CurrentMod()) { SetCurrentMod(mod); }
+    ~ScopedCurrentMod() { SetCurrentMod(previous_); }
+    ScopedCurrentMod(const ScopedCurrentMod&) = delete;
+    ScopedCurrentMod& operator=(const ScopedCurrentMod&) = delete;
+private:
+    Kuru::IMod* previous_;
+};
+
+// Remove host registrations without calling mod code. Safe after a partial OnLoad.
+void RemoveRegistrations(Kuru::IMod* mod);
+
+// Disable, run OnUnload if previously enabled, and clean up even if OnUnload throws.
+// Shared by disable, reload, and eject. Keeps the instance alive.
+void Deactivate(Entry& entry);
+
+// Enable/disable a mod live. Failed OnLoad attempts are cleaned up and stay disabled.
 void SetEnabled(Entry& entry, bool enabled);
 
-// Reload: destroy the instance and build a fresh one (resets all in-memory state), then OnLoad.
+// Reload: recreate the instance, then OnLoad. Failed creation/loading leaves it disabled.
 void Reload(Entry& entry);
 
 } // namespace Kuru::ModRegistry

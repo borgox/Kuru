@@ -40,10 +40,13 @@ using DestroyModFunc = void (*)(IMod*);
         return &info; \
     } \
     KURU_SDK_EXPORT Kuru::IMod* KuruCreateMod() { \
-        return new ModType(); \
+        auto* mod = new ModType(); \
+        Kuru::SetTaskOwner(mod); \
+        return mod; \
     } \
     KURU_SDK_EXPORT void KuruDestroyMod(Kuru::IMod* mod) { \
         delete mod; \
+        Kuru::SetTaskOwner(nullptr); \
     } \
     /* The HostApi version this mod was BUILT against. The loader refuses a mod that needs a newer */ \
     /* host than it provides (forward-incompatible), so a mismatched download is skipped. */ \

@@ -20,11 +20,12 @@ inline void Thunk(const char* args, void* user) {
 
 inline void Register(const char* name, const char* help, detail::Handler handler) {
     const HostApi* api = GetHostApi();
-    if (!api || !api->RegisterCommand) {
+    if (!api || api->Version < 4 || !api->RegisterOwnedCommand) {
         return;
     }
     auto* holder = new detail::Handler(std::move(handler));
-    api->RegisterCommand(name, help, &detail::Thunk, holder);
+    api->RegisterOwnedCommand(name, help, &detail::Thunk, holder,
+                             [](void* user) { delete static_cast<detail::Handler*>(user); });
 }
 
 } // namespace Kuru::Commands

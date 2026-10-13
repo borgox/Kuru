@@ -1,11 +1,13 @@
 #include <Kuru/HostApi.hpp>
 #include <Kuru/Log.hpp>
+#include <atomic>
 
 namespace Kuru {
 namespace {
 // Per-mod pointer to the host's API table, the host pushes the same table into all of them via KuruInitHostApi.
 const HostApi* gHostApi = nullptr;
 const char* gModTag = "mod";
+std::atomic<void*> gTaskOwner{nullptr};
 }
 
 void SetModTag(const char* tag) noexcept {
@@ -32,5 +34,8 @@ void SetHostApi(const HostApi* api) noexcept {
 const HostApi* GetHostApi() noexcept {
     return gHostApi;
 }
+
+void SetTaskOwner(void* owner) noexcept { gTaskOwner.store(owner); }
+void* GetTaskOwner() noexcept { return gTaskOwner.load(); }
 
 } // namespace Kuru

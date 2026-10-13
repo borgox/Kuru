@@ -21,6 +21,7 @@
 
 #include <Kuru/Common/Globals.hpp>
 #include <Kuru/Common/Pattern.hpp>
+#include <Kuru/Common/Memory.hpp>
 #include <Kuru/Common/Unreal.hpp>
 
 #include <windows.h>
@@ -331,7 +332,23 @@ std::filesystem::path SelfDirectory() {
     return std::filesystem::path(buffer).parent_path();
 }
 
-// Resolve RL globals and publish them to the SDK. Returns false if the game memory could not be validated
+// Validate the live allocator pointer and the three callable allocation entries.
+bool ReadGameAllocator(std::uintptr_t slot, Kuru::SDK::FMalloc*& allocator) {
+    __try {
+        auto* candidate = *reinterpret_cast<Kuru::SDK::FMalloc**>(slot);
+        auto** table = *reinterpret_cast<void***>(candidate);
+        if (!Kuru::Common::IsReadableMemory(table, 5 * sizeof(void*)) ||
+            !Kuru::Common::IsExecutableMemory(table[2]) ||
+            !Kuru::Common::IsExecutableMemory(table[3]) ||
+            !Kuru::Common::IsExecutableMemory(table[4])) return false;
+        allocator = candidate;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Resolve RL globals and publish them to the SDK. Stop if required bindings are unavailable.
 bool BootstrapGlobals() {
     const auto globals = Kuru::Common::TryInitializeRocketLeagueGlobalsFromPattern(Kuru::Common::GNamesPattern);
     if (!globals.has_value() || globals->GNames == nullptr || globals->GObjects == nullptr) {
@@ -370,7 +387,23 @@ bool BootstrapGlobals() {
         Log("WARNING: ProcessEvent not resolved (no valid object vtable), calls/hooks disabled");
     }
 
-    // GMalloc + PI/PD/PRF/etc... bindings are resolved as their features land.
+    // The installed RL allocator's Malloc/Realloc/Free use vtable slots 2/3/4.
+    // Resolve its global slot from the same initialization sequence used by SDKGen.
+    if (const auto match = Kuru::Common::FindPatternInCurrentModule(
+            "48 89 0D ?? ?? ?? ?? 48 8B 01 FF 50 60")) {
+        std::int32_t displacement = 0;
+        std::memcpy(&displacement, reinterpret_cast<const void*>(*match + 3), sizeof(displacement));
+        const auto slot = *match + 7 + displacement;
+        Kuru::SDK::FMalloc* allocator = nullptr;
+        if (ReadGameAllocator(slot, allocator)) {
+            bindings.Malloc = allocator;
+            Log("game allocator resolved");
+        }
+    }
+    if (!bindings.Malloc) {
+        Log("game allocator unavailable; bootstrap stopped to avoid unsafe SDK allocation");
+        return false;
+    }
     Kuru::SDK::SetRuntimeBindings(bindings);
 
     Log("globals bootstrapped: names=" + std::to_string(globals->GNames ? globals->GNames->Count : 0) +
@@ -488,10 +521,14 @@ void LoadModsFrom(const std::filesystem::path& modsDir) {
 
         // Tag any hooks/commands the mod registers during OnLoad with this mod, so disabling it can remove them.
         Kuru::ModRegistry::SetCurrentMod(instance);
+        Kuru::ThreadBridge::BeginForMod(instance);
         const bool ok = instance->OnLoad();
         Kuru::ModRegistry::SetCurrentMod(nullptr);
         if (!ok) {
             Log(std::string("mod OnLoad returned false: ") + (info ? info->Name : "?"));
+            // OnUnload is only for successfully loaded mods. Roll back host registrations
+            // before destroying the partial instance or unloading its callback code.
+            Kuru::ModRegistry::RemoveRegistrations(instance);
             destroy(instance);
             FreeLibrary(dll);
             continue;
@@ -514,17 +551,13 @@ void LoadModsFrom(const std::filesystem::path& modsDir) {
 void UnloadAllMods() {
     auto& mods = Kuru::ModRegistry::Entries();
     // Reverse order so later mods tear down before the ones they may depend on.
-    for (const auto & mod : std::views::reverse(mods)) {
+    for (auto& mod : std::views::reverse(mods)) {
+        Kuru::ModRegistry::Deactivate(mod);
         if (mod.instance) {
-            Kuru::ModRegistry::SetCurrentMod(mod.instance);
-            if (mod.enabled) mod.instance->OnUnload();
-            Kuru::HookEngine::RemoveHooksForMod(mod.instance);
-            Kuru::Console::RemoveCommandsForMod(mod.instance);
-            Kuru::Variables::RemoveCVarsForMod(mod.instance);
+            Kuru::ModRegistry::ScopedCurrentMod owner(mod.instance);
             if (mod.destroy) {
                 mod.destroy(mod.instance);
             }
-            Kuru::ModRegistry::SetCurrentMod(nullptr);
         }
         if (mod.dll) {
             FreeLibrary(static_cast<HMODULE>(mod.dll));
@@ -674,6 +707,7 @@ DWORD WINAPI HostThread(LPVOID) {
     Kuru::Gui::SetModRenderer([]() {
         for (const Kuru::ModRegistry::Entry& mod : Kuru::ModRegistry::Entries()) {
             if (mod.instance && mod.enabled) {
+                Kuru::ModRegistry::ScopedCurrentMod owner(mod.instance);
                 mod.instance->OnRender();
             }
         }

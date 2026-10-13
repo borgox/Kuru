@@ -3,6 +3,8 @@
 #include "ModRegistry.hpp"
 #include "Lifecycle.hpp"
 #include "Storage.hpp"
+#include "CallbackLifetime.hpp"
+#include <memory>
 
 #include <imgui.h>
 
@@ -35,6 +37,7 @@ struct Command {
     CommandFn fn;
     void* user;
     void* owner;  // the mod that registered it (nullptr for host builtins)
+    std::shared_ptr<CallbackLifetime> lifetime;
 };
 std::unordered_map<std::string, Command> gCommands;
 
@@ -113,19 +116,37 @@ void AddLog(const char* message) {
     AddLogTagged(1, "Kuru", message);  // Info, host tag
 }
 
-void RegisterCommand(const char* name, const char* help, const CommandFn fn, void* user) {
-    if (Kuru::Lifecycle::stopping.load() || !name || !fn) {
-        return;
-    }
+void RegisterOwnedCommand(const char* name, const char* help, const CommandFn fn, void* user,
+                          void (*cleanup)(void*)) {
+    auto lifetime = std::make_shared<CallbackLifetime>(user, cleanup);
+    if (Kuru::Lifecycle::stopping.load() || !name || !fn) return;
     void* owner = Kuru::ModRegistry::CurrentMod();
-    std::scoped_lock lock(gMutex);
-    gCommands[name] = {help ? help : "", fn, user, owner};
+    std::shared_ptr<CallbackLifetime> previous;
+    {
+        std::scoped_lock lock(gMutex);
+        if (auto it = gCommands.find(name); it != gCommands.end()) {
+            previous = it->second.lifetime;
+            previous->removed.store(true);
+        }
+        gCommands[name] = {help ? help : "", fn, user, owner, lifetime};
+    }
+}
+
+void RegisterCommand(const char* name, const char* help, CommandFn fn, void* user) {
+    RegisterOwnedCommand(name, help, fn, user, nullptr);
 }
 
 void RemoveCommandsForMod(const void* mod) {
-    std::scoped_lock lock(gMutex);
-    for (auto it = gCommands.begin(); it != gCommands.end();) {
-        it = (it->second.owner == mod) ? gCommands.erase(it) : std::next(it);
+    std::vector<std::shared_ptr<CallbackLifetime>> removed;
+    {
+        std::scoped_lock lock(gMutex);
+        for (auto it = gCommands.begin(); it != gCommands.end();) {
+            if (it->second.owner == mod) {
+                it->second.lifetime->removed.store(true);
+                removed.push_back(it->second.lifetime);
+                it = gCommands.erase(it);
+            } else ++it;
+        }
     }
 }
 
@@ -150,6 +171,8 @@ void Execute(const std::string& commandLine) {
         }
         command = it->second;  // copy so we don't hold the lock across the callback
     }
+    if (command.lifetime->removed.load()) return;
+    Kuru::ModRegistry::ScopedCurrentMod owner(static_cast<Kuru::IMod*>(command.owner));
     command.fn(args.c_str(), command.user);
 }
 
