@@ -530,8 +530,8 @@ void RenderUi(HWND hwnd) {
 
             beginCard("genCard");
             ImGui::TextWrapped(
-                "Regenerates the typed SDK from the running game. Only needed after a Rocket League "
-                "update, for building mods. Normal users can ignore this.");
+                "Generates the typed SDK and a self-contained mod template from the running game. "
+                "Use it to start a mod or refresh its SDK after a Rocket League update.");
             ImGui::Spacing();
             dllRow("SDK generator (KuruSDKGen.dll)", generatorPath, "gen");
             ImGui::Spacing();

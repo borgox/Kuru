@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include "TemplateBundle.hpp"
 
 #include <Kuru/Common/DumpSchema.hpp>
 
@@ -27,10 +28,21 @@ DWORD WINAPI Worker(LPVOID) {
 
     const std::filesystem::path outputPath = std::filesystem::path(dir) / "generated-sdk";
     const bool ok = Kuru::SdkGen::Generate(document, outputPath);
-    const std::string message =
+    std::string message =
         ok ? "SDK generated.\n\nOutput:\n" + outputPath.string()
            : "SDK generation failed.\n\nSee KuruSDKGen.log in:\n" + dir;
-    MessageBoxA(nullptr, message.c_str(), "KuruSDKGen", (ok ? MB_ICONINFORMATION : MB_ICONERROR) | MB_OK);
+    bool packaged = false;
+    if (ok) {
+        try {
+            const auto modTemplate = Kuru::SdkGen::PackageTemplate(outputPath);
+            message += "\n\nReady-to-build mod template:\n" + modTemplate.string();
+            packaged = true;
+        } catch (const std::exception& error) {
+            message += "\n\nMod template packaging failed:\n" + std::string(error.what());
+        }
+    }
+    MessageBoxA(nullptr, message.c_str(), "KuruSDKGen",
+                (ok && packaged ? MB_ICONINFORMATION : MB_ICONERROR) | MB_OK);
     return 0;
 }
 

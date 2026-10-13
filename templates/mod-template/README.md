@@ -1,21 +1,27 @@
 # Kuru mod template
 
-A minimal Kuru mod. Copy this folder, rename it, and edit `src/MyMod.cpp`.
+The SDK generator produces this self-contained folder beside `generated-sdk`.
+Copy or rename the entire folder, then edit `src/MyMod.cpp`.
+The copy in the Kuru repository is the packaging source; use the generated folder to build a mod.
 
 ## Prerequisites
 
+- Windows x64
 - Visual Studio 2022 (or the Build Tools) with the C++ workload
 - CMake 3.24+
-- A Kuru checkout that has been built once (that build produces the generated SDK the mod compiles against)
 
 ## Build
 
+Run these commands from this folder:
+
 ```
-cmake -B build -DKURU_DIR=C:/path/to/Kuru
+cmake -B build -A x64
 cmake --build build --config Release
 ```
 
-`KURU_DIR` points at your Kuru source tree. The generated SDK is picked up automatically from its build
-directory; if it can't be found, pass `-DKURU_GENERATED_SDK=C:/path/to/generated-sdk`.
+No Kuru checkout, SDK paths, dependency downloads, or Python installation are needed.
+The folder includes the SDK runtime sources, generated game headers, and Kuru's matching ImGui sources.
 
 The result is `build/Release/MyMod.dll`. Drop it in Kuru's `mods/` folder and inject.
+After a game update, generate a fresh template and update your mod's bundled SDK as needed.
+Keep ImGui matched to the Kuru host version when updating dependencies.
