@@ -1,4 +1,5 @@
-# Third-party dependencies. Fetched from source and built with our toolchain
+# Third-party dependencies. Fetched from source and built with our toolchain.
+# Pin tested commits so fresh builds use the same dependency sources.
 
 include(FetchContent)
 
@@ -6,17 +7,17 @@ include(FetchContent)
 FetchContent_Declare(
     minhook
     GIT_REPOSITORY https://github.com/TsudaKageyu/minhook.git
-    GIT_TAG        master
+    GIT_TAG        8af6b4acae5a9388fd742b56fa79ece89d96f823
 )
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(MINHOOK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(minhook)
 
-# Dear ImGui, MIT licensed
+# Dear ImGui (docking branch commit), MIT licensed
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        docking
+    GIT_TAG        64944b4520b30772de8dbf0b37d0311746477a32
 )
 FetchContent_MakeAvailable(imgui)
 
@@ -38,7 +39,7 @@ target_link_libraries(imgui PUBLIC d3d11 dxgi dxguid)
 FetchContent_Declare(
     iconfontcppheaders
     GIT_REPOSITORY https://github.com/juliettef/IconFontCppHeaders.git
-    GIT_TAG        main
+    GIT_TAG        210b5a399a64270674560d633638952d1e8d804d
 )
 FetchContent_MakeAvailable(iconfontcppheaders)
 
