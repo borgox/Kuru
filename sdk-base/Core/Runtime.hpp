@@ -64,9 +64,10 @@ bool ResolveRuntime();
 [[nodiscard]] ObjectInitializerFunc GetObjectInitializer() noexcept;
 [[nodiscard]] FMalloc* GetMemoryAllocator() noexcept;
 
+// Engine-compatible allocation only. Missing allocator bindings throw; there is no CRT fallback.
 [[nodiscard]] void* Allocate(std::uint32_t size, std::uint32_t alignment = alignof(std::max_align_t));
 [[nodiscard]] void* Reallocate(void* original, std::uint32_t size, std::uint32_t alignment = alignof(std::max_align_t));
-void Deallocate(void* original) noexcept;
+void Deallocate(void* original);
 
 bool KuruInitGlobals();
 

@@ -14,7 +14,7 @@ namespace Kuru::SDK {
 class UObject;
 
 [[nodiscard]] void* Reallocate(void* original, std::uint32_t size, std::uint32_t alignment);
-void Deallocate(void* original) noexcept;
+void Deallocate(void* original);
 
 template <typename T>
 struct TArray {

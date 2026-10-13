@@ -1,6 +1,6 @@
 #include <Core/Globals.hpp>
 
-#include <cstdlib>
+#include <stdexcept>
 #include <cstring>
 
 namespace Kuru::SDK {
@@ -75,8 +75,7 @@ void* Allocate(std::uint32_t size, std::uint32_t alignment) {
     if (GMalloc) {
         return GMalloc->Malloc(size, alignment);
     }
-    (void)alignment;
-    return std::malloc(size);
+    throw std::runtime_error("Kuru SDK game allocator is unavailable (Allocate)");
 }
 
 void* Reallocate(void* original, std::uint32_t size, std::uint32_t alignment) {
@@ -86,11 +85,10 @@ void* Reallocate(void* original, std::uint32_t size, std::uint32_t alignment) {
     if (GMalloc) {
         return GMalloc->Realloc(original, size, alignment);
     }
-    (void)alignment;
-    return std::realloc(original, size);
+    throw std::runtime_error("Kuru SDK game allocator is unavailable (Reallocate)");
 }
 
-void Deallocate(void* original) noexcept {
+void Deallocate(void* original) {
     if (!original) {
         return;
     }
@@ -102,7 +100,7 @@ void Deallocate(void* original) noexcept {
         GMalloc->Free(original);
         return;
     }
-    std::free(original);
+    throw std::runtime_error("Kuru SDK game allocator is unavailable (Deallocate)");
 }
 
 bool KuruInitGlobals() {
