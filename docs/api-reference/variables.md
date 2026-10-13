@@ -23,3 +23,6 @@ Read a CVar as a bool.
 
 `Set(const char* name, value)`
 Set a CVar. Overloads accept `const char*`, `std::string`, `int`, `float`, and `bool`.
+
+Disabling or reloading a mod preserves its settings. Re-registering a variable restores its latest
+value. Use the console's `unset` command or the Settings tab's delete button to remove a saved value.

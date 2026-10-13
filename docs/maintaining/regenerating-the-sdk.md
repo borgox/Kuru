@@ -16,6 +16,9 @@ When it finishes you get a "SDK generated" message box, and next to the DLL you 
 
 - `generated-sdk/` - the headers (`KuruSDK.hpp`, `Kuru/`, `Generated/`). This appearing is the real success
   signal.
+- `mod-template/` - a standalone mod project with the generated headers, SDK runtime, and matching ImGui.
+  Build it with `cmake -B build -A x64` followed by `cmake --build build --config Release`.
+  Existing template folders are preserved; later generations use numbered names.
 - `dump.json` - the raw reflection dump, tens of MB with the full object set.
 - `KuruSDKGen.log` - a detailed log of the walk. This is where to look if something went wrong; a
   `GNames pattern not found` line there means the dumper's byte pattern is stale for this game version (see

@@ -6,6 +6,12 @@ for the how and why.
 A hook callback is `void(Kuru::HookContext&)`. The register functions return a `Kuru::HookHandle` you can pass
 to `Remove`.
 
+With host API v4, Kuru releases callbacks and their captured values when hooks,
+event listeners, or commands are removed or replaced, or their mod is unloaded.
+A callback already in progress stays alive until it returns. Rebuild existing
+mods against the updated SDK to use this cleanup; older binaries keep their
+previous callback storage behavior.
+
 ## Functions
 
 `Pre(const char* functionFullName, callback) -> HookHandle`
