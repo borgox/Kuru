@@ -2,7 +2,8 @@
 
 A delegate is a function bound at runtime - a "call this later" handle. UnrealScript uses them for callbacks
 and events: "when login completes, call this." Rocket League's delegate system is one of the more forked parts
-of the engine, and what's here comes from reverse-engineering it directly.
+of the engine. This page distinguishes the SDK's current representation from engine behavior that
+still needs a retained binary trace or other verification.
 
 ## FScriptDelegate
 
@@ -18,25 +19,35 @@ bytes, exactly as in stock UE3:
 
 A delegate *property* on a Rocket League object isn't a bare `FScriptDelegate` - it's **24 bytes**. The
 first 16 are an inline single binding (object + function name); the extra 8-byte field at `0x10` is a
-pointer to a `TArray<FScriptDelegate>` - the multicast invocation list. The engine allocates that array
-only when more than one handler is bound, so with zero or one handler the pointer is null and the inline
-binding is used. This is the type Kuru calls `FMultiScriptDelegate`, and it's why delegate fields on a
-class are spaced `0x18` apart.
+pointer to a `TArray<FScriptDelegate>` in the current SDK model. This is `FMultiScriptDelegate`, size
+`0x18`. Its helper `Broadcast` walks a nonempty multicast list when present and otherwise invokes the
+inline binding. That helper does not establish exactly when the game's own allocator creates or
+switches representations; don't infer that rule from a null pointer or the C++ size assertion alone.
 
-## The two dispatch layers
+## Delegate entry points
 
-Delegates get their own entries in the [dispatch layer](05-function-dispatch-layers.md) table:
+The engine has delegate entry points in addition to the three layers currently intercepted by Kuru:
 
 - **`ProcessDelegate`** handles a delegate call, and for a multicast delegate loops the invocation list.
 - **`CallDelegate`** invokes one bound target - it resolves the binding to a `UFunction` and dispatches it.
 
-For an ordinary delegate this ends in a normal local call. Kuru hooks these layers like any other, resolving
-the bound function so a name-based hook on it fires when the delegate runs.
+The current hook engine does not install separate detours on either delegate entry point. A hook on
+the bound function fires only if the engine reaches that function through an intercepted layer
+eligible for that hook's dispatch selection.
+
+The SDK's `FScriptDelegate::ProcessDelegate` helper requires a ProcessDelegate runtime binding. The
+current loader bootstrap supplies ProcessEvent but does not populate that delegate binding, so the
+helper silently does nothing with the bindings supplied by the current loader.
 
 ## NetDelegate
 
-One `UFunction` flag, `0x20000000` - a bit that means "editor-only" in stock UE3 but is repurposed in the fork
-— marks a **networked** delegate. The flagged functions turn out to be RPC and network-message handlers
-(`Handle*RPC`, `Handle*Message`, login/party/matchmaking callbacks). A plain delegate is invoked locally; a net
-delegate's call is instead routed through the replication path so it crosses the network. That routing is the
-extra branch in the delegate dispatch, and it's why the fork carries the extra per-delegate state to begin with.
+Earlier research associated `0x20000000` with network-related delegate handlers. The current
+`Core/Flags.hpp` still names the bit `FUNC_EditorOnly` and the hook engine does not implement a
+NetDelegate routing branch. Correlation with RPC/message handler names does not establish that a
+flagged call crosses the network. Treat the interpretation, routing rules, and connection to the
+extra delegate storage as unverified until supported by a retained trace or disassembly.
+
+Sources: [Delegates.hpp](../../../sdk-base/Core/Delegates.hpp),
+[Flags.hpp](../../../sdk-base/Core/Flags.hpp), and
+[ObjectModel.cpp](../../../sdk-base/src/ObjectModel.cpp). See
+[SDK verification annotations](../../../sdk-base/Core/Script.hpp).

@@ -4,9 +4,13 @@ The [object system](02-the-object-system.md) page showed that a type is a list o
 with an `Offset` into the instance and a `Class` naming its kind. This page turns that into actually reading
 values - and into the typed SDK you use from a mod.
 
+Code fragments below are schematic: their object/property variables must already refer to valid
+metadata. Use the SDK's actual `IsA` member in mod code.
+
 ## Property kinds
 
-A property's `Class` tells you its kind. The kind's subclass adds one specializing field at `0xC8`. The
+A property's `Class` tells you its kind. Several subclasses add metadata beginning at `0xC8`, after
+the current `UProperty` layout; this is not a universal shape for all property kinds. The
 common kinds and how each is stored:
 
 | Kind | Stored as | Read it |
@@ -15,7 +19,7 @@ common kinds and how each is stored:
 | `IntProperty` | `int32` (4) | `*(int32*)(base + Offset)` |
 | `QWordProperty` | `uint64` (8) | `*(uint64*)(base + Offset)` |
 | `ByteProperty` | `uint8` (1) | `*(uint8*)(base + Offset)`; if `Enum` is set it's an enum value |
-| `BoolProperty` | a bit in a `uint32` | `(*(uint32*)(base + Offset) & BitMask) != 0` |
+| `BoolProperty` | for the supported 4-byte case, masked bits in a `uint32` | read ElementSize and the property's mask |
 | `ObjectProperty` | `UObject*` (8) | `*(UObject**)(base + Offset)`; `PropertyClass` is the expected type |
 | `NameProperty` | `FName` (8) | look up in `GNames` |
 | `StrProperty` | `FString` (16) | a `TArray` of wide chars |
@@ -24,13 +28,12 @@ common kinds and how each is stored:
 
 ### The bool trap
 
-`BoolProperty` is the one that bites people. A UE3 bool isn't a byte - it's a single bit packed into a
-`uint32`, selected by the property's `BitMask` (at `0xC8`). Reading the raw byte gives garbage; you have to
-mask:
+Reflected bool storage must follow its metadata, not an assumed C++ `bool` layout. For a 4-byte property,
+Kuru's property viewer and generated accessors mask a `uint32` using the low bits of `BitMask`:
 
 ```cpp
-uint32 word = *reinterpret_cast<uint32*>(base + prop->Offset);
-bool value = (word & boolProp->BitMask) != 0;
+std::uint32_t word = *reinterpret_cast<std::uint32_t*>(base + prop->Offset);
+bool value = (word & static_cast<std::uint32_t>(boolProp->BitMask)) != 0;
 ```
 
 ## Walking every field
@@ -40,12 +43,13 @@ fields is a loop:
 
 ```cpp
 for (UProperty* p = object->Class->PropertyLink; p; p = p->PropertyLinkNext) {
-    const uint8_t* value = reinterpret_cast<uint8_t*>(object) + p->Offset;
+    const std::uint8_t* value = reinterpret_cast<std::uint8_t*>(object) + p->Offset;
     // decode by p->Class kind, using the table above
 }
 ```
 
-That loop is exactly what the Objects tab runs to list a selected object's properties.
+That is one reflection traversal. The current Objects tab uses `Children` for each class in the
+inheritance chain instead, so it can group properties by their declaring class.
 
 ## IsA and casting
 
@@ -66,13 +70,14 @@ pointer.
 ## Finding objects
 
 To find objects you scan `GObjects`. "Find the class `Car_TA`" or "find every live `Ball_TA`" is a filter over
-the global array by name or by `IsA`. Kuru wraps the common lookups (`FindObject`, `FindClass`), and the
-`Game::` helpers are thin shortcuts on top of them.
+the global array by name or by `IsA`. Kuru wraps common lookups (`FindObject`, `FindClass`). The generic
+`Game::GetAllOfType`/`GetFirstOfType` helpers scan the array, while common player and match helpers
+follow a cached engine's object graph.
 
 ## From reflection to a typed SDK
 
 Doing this walk at runtime for every field would be slow and verbose, so the SDK generator does it **once**:
-it reads every class's `PropertyLink`, records each property's name, kind, and offset, and writes out typed
+it walks reflected types and their `Children`, records each property's name, kind, and offset, and writes out typed
 C++ structs. A generated `ACar_TA` has its fields at the offsets reflection reported, so a mod skips the walk
 and writes `car->SomeField` directly - the offset is baked in.
 

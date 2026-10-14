@@ -1,44 +1,66 @@
 # Finding patterns
 
-Kuru finds the game's globals and entry points at runtime instead of hardcoding addresses (see
-[how Kuru boots](../modding/concepts/06-how-kuru-boots.md)). Most of that survives updates on its own. The one
-part that can break is a byte pattern: when Psyonix rewrites the code around a global, the signature Kuru scans
-for stops matching and that resolver comes back empty. This page is how to fix one.
+Kuru resolves many game globals and entry points at runtime (see
+[how Kuru boots](../modding/concepts/06-how-kuru-boots.md)). Changed data or instructions can invalidate
+a pattern. Fixed layouts, vtable slots, argument
+handling, and fallback addresses must be checked separately. This page covers resolver failures.
 
 ## What resolves how
 
-Not everything is a pattern, and the non-pattern parts rarely need attention:
+The current resolution paths are:
 
-- **Vtable layers** (`ProcessEvent` and the others) are read from a live object's vtable by index. These only
-  break if Psyonix reorders the vtable, which is rare.
+- **Vtable layers** (`ProcessEvent` at 67, `CallFunction` at 76) are read from a live object's table.
+  Correct indices alone do not prove that a function's behavior or calling shape is unchanged.
 - **`ProcessInternal`** is read from a script function's `Func` pointer. Structural, not a pattern.
-- **`GNatives`** is found by scanning `ProcessInternal` for the table access and validating that the candidate
-  is 256 code pointers. The validation means a wrong match is rejected rather than used.
-- **`GNames` and `GObjects`** are found by a byte pattern that references them. This is the one most likely to
-  need updating.
-- **The interpreter globals** are found from a `GNatives` handler's writes, then confirmed by an active probe.
+- **`GNatives`** is found by scanning `ProcessInternal` for candidate table references and checking the
+  first 256 pointers against the executable section. Also verify what those functions do.
+- **`GNames`** matches an in-image data signature. The match address is used directly as the name-array
+  header, not decoded as a reference from an instruction.
+- **`GObjects`** is derived at `GNames + 0x48`. Both headers and sampled object/name relationships are
+  validated. The displacement is a version-specific assumption.
+- **`GMalloc`** uses a separate RIP-relative instruction pattern. The loader requires a usable allocator before loading mods.
+- **The interpreter globals** are inferred from handler writes and an active probe. Runtime failure
+  falls back to build-specific RVAs in the loader. A fallback log line is a reason to validate those
+  addresses, not evidence that the resolver succeeded.
 
-So in practice "a pattern broke" almost always means the `GNames`/`GObjects` signature.
+SDKGen additionally resolves optional build metadata. Not every missing metadata pattern is fatal.
 
 ## Recognising a broken pattern
 
 The bootstrap log says which step failed. A line like `global bootstrap failed: GNames/GObjects not resolved`,
-or a resolver reporting zero, is the signal. If bootstrap does not get past that, the loader does nothing.
+or `game allocator unavailable` identifies a required dependency that failed. Missing GNatives can
+leave native argument reading unavailable while other hooks still install. Diagnose the particular
+failure rather than assuming every warning has the same cause.
 
 ## Re-deriving the signature
 
 Open the current Rocket League binary in a disassembler (IDA or similar):
 
-1. Find the global. `GObjects` is a large array of pointers, and `GNames` sits near it. Cross-references from a
-   function you can identify (anything that iterates all objects, or resolves a name) lead to them.
-2. Pick a short, unique instruction sequence that references the global and turn it into a signature: the fixed
-   opcode bytes, with wildcards over the address operand.
-3. Confirm the signature matches exactly once in the module, and that the operand resolves to the global.
+For GNames, locate the live array header and verify Data/Count/Max and its name entries. Check the
+object-array header at `+0x48`. Compare the header bytes with `GNamesPattern`, keeping relocated
+pointers wildcarded, and verify the candidate with the globals validator. The scanner searches the
+module image, including data; this path does not decode an instruction operand.
 
-Update the pattern in the loader's bootstrap and rebuild. Because the resolvers downstream (`GNatives`, the
-interpreter globals) validate what they find, a correct `GNames`/`GObjects` unfolds the rest.
+GMalloc uses a different mechanism: a RIP-relative instruction signature. Locate its initialization
+sequence, wildcard the displacement, and verify the pointer slot it references. The current loader
+reads a signed displacement at match `+3`, relative to the next instruction at `+7`.
 
-## Why this stays rare
+Update the appropriate source and rebuild. GNames/GObjects resolution is shared in `KuruCommon`;
+allocator/metadata pattern strings also appear in the loader or SDKGen. Check each affected consumer.
+Then verify downstream resolution, reflection, hooks, and parameter behavior independently.
 
-Patterns are chosen to be stable: distinctive instruction shapes rather than exact addresses. An update that
-just relocates code leaves them intact. Only a rewrite of the code around a global forces a new signature.
+## Evidence to keep
+
+Record the game build, matched data header or instruction, decoded address where applicable, and
+validation result. Keep the disassembly/trace used to establish meaning. A relocated address can still match
+the same signature. After an update, verify that the match still identifies the intended data or function.
+
+## Source locations
+
+| Binding | Files and symbols |
+| --- | --- |
+| GNames signature | `libs/KuruCommon/include/Kuru/Common/Pattern.hpp`: `GNamesPattern` |
+| Match used directly as GNames | `libs/KuruCommon/src/Globals.cpp`: `TryInitializeRocketLeagueGlobalsFromPattern` |
+| GObjects `+0x48` and validation | `libs/KuruCommon/src/Unreal.cpp`: `GObjectsFromGNamesOffset`, `ValidateRocketLeagueGlobalsFromGNames` |
+| GMalloc instruction pattern | `libs/KuruLoader/src/DllMain.cpp`: `BootstrapGlobals`; separate copy in SDKGen's `ReflectionWalk.cpp` |
+| Interpreter globals / fallback RVAs | `DllMain.cpp`: `ResolveInterpreterGlobals`, `BootstrapGlobals` |

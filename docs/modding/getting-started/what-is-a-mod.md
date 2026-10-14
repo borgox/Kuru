@@ -13,13 +13,21 @@ can:
 
 ## How it runs
 
-Kuru loads every `.dll` in its `mods/` folder. Your mod is a class that implements `Kuru::IMod`, and Kuru
+Mods are native C++20 code inside the game process. A mod can corrupt or crash the game; host
+guards provide only the limited [failure handling](../../api-reference/mod.md#failure-handling).
+
+Kuru attempts `.dll` files in its `mods` folder, skips `.dll.disabled` files, and logs rejected DLLs.
+Failed initial loads do not appear in the Mods tab and need eject/reinject or restart for another attempt. Your mod is a class that implements `Kuru::IMod`, and Kuru
 calls into it at the right times:
 
-- `OnLoad` - once, when the mod loads. Register your hooks, commands, and settings here.
-- `OnUpdate(dt)` - every frame, on the game thread.
-- `OnRender` - every frame, to draw your overlay.
-- `OnUnload` - when the mod is disabled.
+- `OnLoad` - on initial load and when enabled again. Register hooks, commands, and settings here.
+- `OnUpdate(dt)` - when the game-thread dispatcher pumps an update.
+- `OnRender` - while the overlay builds an ImGui frame, on the game-window thread.
+- `OnUnload` - before disabling, reloading an enabled instance, or ejecting an enabled mod.
+
+Initial loading happens on Kuru's bootstrap worker; it is not a game-thread callback. Queue game
+object work with `Kuru::Execute`. See [threading](../guides/threading.md) and the
+[lifecycle reference](../../api-reference/mod.md) before sharing state between callbacks.
 
 That's the whole shape. Everything else is the API you call from inside those.
 

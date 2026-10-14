@@ -2,14 +2,14 @@
 
 ## Logging
 
-`Kuru::Info`, `Kuru::Warning`, and `Kuru::Trace` write to the F3 console and to the log file. Lines are
+`Kuru::Info`, `Kuru::Warning`, `Kuru::Error`, and `Kuru::Trace` write to the F3 console and to the log file. Lines are
 tagged with your mod's name.
 
 ```cpp
 Kuru::Info("value is " + std::to_string(x));
 ```
 
-The log file is `kuru.log` in `%AppData%/Roaming/Kuru`.
+The log file is `%APPDATA%\Kuru\kuru.log` (`%APPDATA%` already includes Roaming).
 
 ## The console
 
@@ -25,7 +25,7 @@ The F2 menu has tools for figuring out the game:
 
 ## DebugView
 
-Kuru also writes to Windows debug output, so
-[DebugView](https://learn.microsoft.com/sysinternals/downloads/debugview) catches everything - including the
-early bootstrap lines before the console exists. Run it as admin with "Capture Global Win32" on. This is
-where you look when a mod doesn't load and you need to see why.
+The bootstrap and hook engine also write selected diagnostic lines to Windows debug output.
+DebugView or an attached debugger can help inspect them. This is not a complete mirror of every
+mod log line; start with `kuru.log` for loading errors and `KuruSDKGen.log` beside the generator for
+SDK generation errors.

@@ -1,7 +1,8 @@
 # How Kuru boots
 
 Kuru is a DLL injected into Rocket League. Between "the DLL loaded" and "mods are running" it has to find the
-game's internals - and it does so without any hardcoded addresses, which is what lets it survive game updates.
+game's internals. Most bindings are resolved at runtime, but fixed core layouts, vtable indices, and an
+interpreter-global RVA fallback remain version-specific.
 
 ## Injection and the worker thread
 
@@ -12,38 +13,57 @@ Everything below happens on that thread.
 ## Waiting for the game
 
 The injector can attach before the engine has built its object array, so the worker waits first: it polls
-until `GObjects` exists and actually has objects in it. Only then does the rest of bootstrap run. This is why
-you can inject early, or auto-inject on launch, without the loader silently failing.
+until a globals candidate validates and `GObjects` has data. It retries up to 200 times with a 50 ms sleep
+between attempts. Failure is logged and stops that worker. Injecting at the main menu is the normal
+workflow; early injection is not guaranteed to succeed.
 
 ## Resolving the globals
 
-Bootstrap finds each piece of the engine it needs, in order - each grounded in something stable rather than an
+Bootstrap resolves the engine components in this order, using signatures or runtime data instead of an
 address:
 
-- **`GNames` and `GObjects`** - found by scanning the game's code for a byte pattern that references them. The
-  pattern is a distinctive instruction sequence; its operand gives the address.
-- **`ProcessEvent` and the other vtable layers** - read from a live object's vtable at their known indices
-  (67, 68, 71, 76, ...). Every object shares that vtable, so the first valid object works.
-- **`ProcessInternal`** - every non-native `UFunction` has its `Func` pointer set to `ProcessInternal`, so
-  Kuru reads it straight off a script function. Nothing to pattern-match.
+- **`GNames` and `GObjects`** - a data signature is scanned across the module image. Its match address
+  is used directly as the GNames array header; GObjects is derived at `+0x48`. The validator checks
+  both array headers and sampled object/name relationships. No instruction operand is decoded here.
+- **`ProcessEvent` / `CallFunction`** - a live object's vtable supplies entries 67 and 76. This reads
+  entry-point addresses, not a guarantee that every object's whole vtable is identical.
+- **`GMalloc`** - a separate pattern resolves the allocator global slot. The host checks that its table
+  and slots 2/3/4 are readable/executable before publishing Malloc/Realloc/Free bindings. If unavailable,
+  bootstrap stops to avoid falling back to incompatible allocation.
+- **`ProcessInternal`** - scans non-native `UFunction` objects for a non-null `Func`, using the earlier
+  finding that a script function's pointer names the interpreter. This is still a build-dependent assumption.
 - **`GNatives`** - found by scanning `ProcessInternal`'s code for the table access, then validating the
-  candidate is 256 code pointers (nothing else in the module looks like that).
+  candidate's first 256 entries point into the game's executable section. That is a validation heuristic,
+  not a uniqueness proof or a statement about the full size of every native-dispatch table.
 - **The interpreter globals** (`GProperty`, `GPropAddr`, `GPropObject`, `GRuntimeUCFlags`) - found by scanning
   a `GNatives` handler for its writes to those globals, then confirmed by calling the handler with a known
-  object and matching the results by value.
+  object/property and matching the results by value. If runtime resolution fails, the current host
+  supplies hardcoded module-relative addresses and logs that fallback. They must not be assumed valid
+  for a different game build.
 
 Each step leans on the previous one - `ProcessInternal` yields `GNatives`, `GNatives` yields the interpreter
 globals - so one reliable entry point unfolds into everything else.
 
 ## Installing hooks and loading mods
 
-With the layers resolved, Kuru installs its detours (via MinHook) on the vtable entries and `ProcessInternal`,
-then scans the `mods/` folder and loads each mod: it pushes the resolved game bindings and the host API into
-the mod, calls its `OnLoad`, and registers whatever hooks and commands it asks for.
+Before enabling engine detours, Kuru scans the `mods` folder beside its DLL and loads mods on the
+bootstrap worker. It checks required host API versions, supplies runtime/API bindings, creates each
+instance, and calls initial `OnLoad`. A false return rolls back host registrations and pending work
+before destroying the partial instance and releasing its DLL. Initial factory/OnLoad calls are not
+covered by the re-enable/reload C++ exception wrapper.
 
-## Why it's update-proof
+It then installs ProcessEvent, CallFunction, and ProcessInternal detours where resolved, followed by
+Present/ResizeBuffers overlay hooks and the raw mouse capture attempt. Present initializes the ImGui
+context; ImGui frames are built through messages to the game-window thread and rendered as snapshots.
+Not every hook-install result is fatal to the worker, so inspect the log rather than treating the
+status of LoadLibrary as proof of complete initialization.
 
-None of this is a fixed address. Vtable indices, byte patterns, and structural facts - a table of 256 code
-pointers, `Func` equal to `ProcessInternal` - all survive the game moving code around between updates. The
-parts that *can* change are struct layouts (rare) and the occasional byte pattern (when Psyonix rewrites the
-code around a global). Keeping those working is the subject of the [maintaining](../../maintaining) docs.
+## What survives an update
+
+Runtime resolution can tolerate relocated code when the instruction patterns and layouts still match.
+It does not make the loader update-proof. Patterns, vtable slots, interpreter behavior, manually declared
+core layouts, and fallback RVAs can all change. See [updating for a game version](../../maintaining/updating-for-a-new-version.md).
+
+Source: [DllMain.cpp](../../../libs/KuruLoader/src/DllMain.cpp),
+[Gui.cpp](../../../libs/KuruLoader/src/Gui.cpp), and
+[ThreadBridge.cpp](../../../libs/KuruLoader/src/ThreadBridge.cpp).

@@ -13,7 +13,7 @@ add_library(KuruSDKBaseRuntime STATIC
     src/Strings.cpp
     src/World.cpp
 )
-
+# TODO: Check all implementations to ensure they're valid
 target_include_directories(KuruSDKBaseRuntime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(KuruSDKBaseRuntime PUBLIC cxx_std_20)
 set_target_properties(KuruSDKBaseRuntime PROPERTIES POSITION_INDEPENDENT_CODE ON)

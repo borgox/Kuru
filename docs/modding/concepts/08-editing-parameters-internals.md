@@ -19,8 +19,10 @@ parameters, there's nothing to point at yet.
 
 Kuru reconstructs them by *borrowing the interpreter*. For each parameter it reads the argument's opcode and
 calls `GNatives[opcode]` - the game's own handler - to evaluate that argument into a buffer, then rewinds the
-frame's `Code` pointer so the real call re-evaluates the arguments untouched. Because it uses the game's own
-handlers, it never needs a table of what opcodes mean, which keeps it working across the fork's opcode changes.
+frame's `Code` pointer. If the original inline call runs, it evaluates those expressions again.
+Rewinding does not undo their side effects or restore every interpreter global. Arguments that call
+functions or mutate state can have their effects repeated when the original call evaluates them again.
+Using live handlers avoids a handwritten opcode table, but still depends on the right interpreter ABI.
 
 ### Editing them: write-back
 
@@ -34,25 +36,37 @@ be edited this way.
 
 ### Editing them: re-invoke
 
-For a true native - one whose `Func` is real native code - Kuru can do better. Instead of patching argument
+For an eligible native, Kuru can use a different path. Instead of patching argument
 addresses it runs the native itself through `ProcessEvent`, passing the edited buffer. `ProcessEvent` copies
 that buffer into the native's locals, so the native reads *every* argument from it, literals included, and
 writes its out-parameters and return back through it. Kuru then advances the caller's `Code` past the inline
-call so the original doesn't run a second time. Body-less stubs - which have no real native to run - stay on
-write-back.
+call. Eligibility requires reconstructed arguments, a known argument end, `FUNC_Native`, `iNative == 0`,
+nonempty native parameter stub bytecode, and `ParmsSize <= 1024`. Other cases use inline write-back.
+The code also falls back after a reinvocation fault; a fault does not prove that no side effect occurred
+before the failure.
 
 ## Cancel, catch-out, edit-out
 
 The same machinery gives the rest of the flow:
 
-- **Cancel** - advance `Code` past the arguments and the end-of-parameters token, zero the return, and skip the
-  call.
+- **Cancel** - when argument evaluation found the end position, advance `Code` past it and the
+  end-of-parameters token, zero the return slot where present, and skip the call. Without that position,
+  the CallFunction path still calls the original despite `Block()`.
 - **Catch output** - after the call, out-parameters live at the addresses captured while reading, so Kuru
   re-reads them into the buffer and a post hook sees the produced values.
 - **Edit output** - a post hook's changes to out-parameters, or the return, are written back the same way.
 
-## The result
+## Current limits
 
-Because of all this, the flow a mod actually uses - edit inputs, cancel, read outputs, edit outputs - is the
-same three calls (`Params`, `Result`, `Block`) whether the function runs through the event system, the
-interpreter, or a native call. The layer differences are handled here so they never reach the mod.
+`Params`, `Result`, and `Block` share one API across layers, but the support differs. CallFunction uses
+a 1024-byte scratch buffer and tracks at most 32 argument slots for write-back. Evaluation failure can
+leave params null; oversized blocks can be truncated. Strings, arrays, delegates, and other nontrivial
+values are copied as bytes here, not deeply cloned with engine ownership semantics. Only use layouts
+and argument types verified for your function. Do not retain buffer pointers past the callback.
+
+For blocks over 1024 bytes, an early bounds break can still leave a success-looking argument-end
+pointer inside the stream. Do not inspect/edit/block those CallFunction captures: `Block()` may
+advance to the wrong bytecode position. A null check is not sufficient.
+
+Source: `EvaluateCallArgs`, `ReInvokeNative`, and `DetourCallFunction` in
+[HookEngine.cpp](../../../libs/KuruLoader/src/HookEngine.cpp).

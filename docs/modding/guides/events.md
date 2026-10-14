@@ -29,18 +29,22 @@ struct RoundStarted {
     int round;
 };
 
-// producer
-RoundStarted e{3};
-Kuru::Events::Dispatch<RoundStarted>(e);
-
 // listener, in this mod or another
-Kuru::Events::Register<RoundStarted>("on_round", [](RoundStarted& e) {
+auto handle = Kuru::Events::Register<RoundStarted>("on_round", [](RoundStarted& e) {
     Kuru::Info("round " + std::to_string(e.round));
 });
+
+// producer: listeners must already be registered; dispatch is not buffered.
+RoundStarted e{3};
+Kuru::Events::Dispatch<RoundStarted>(e);
 ```
 
 Put the event struct in a shared header if another mod needs to listen. Stop listening with
 `Kuru::Events::Unregister<RoundStarted>(handle)`.
+
+Listeners run synchronously on the dispatching thread. Keep payload definitions identical across mods and do not retain a
+reference after dispatch returns. Empty listener filters match every dispatch; nonempty filters match
+exactly. Higher module-listener priorities fire first. Host-owned callbacks are removed on teardown.
 
 For when to reach for events over plain hooks, and how the bus works underneath, see
 [the hook engine](../concepts/07-the-hook-engine.md).

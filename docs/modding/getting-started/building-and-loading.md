@@ -5,7 +5,7 @@
 From your mod folder:
 
 ```
-cmake -B build -DKURU_DIR=C:/path/to/Kuru
+cmake -B build -A x64
 cmake --build build --config Release
 ```
 
@@ -14,7 +14,7 @@ The output is `build/Release/MyMod.dll`.
 ## Load
 
 1. Copy `MyMod.dll` into Kuru's `mods/` folder, next to `KuruLoader.dll`.
-2. Inject Kuru and launch Rocket League.
+2. Launch Rocket League, wait at the main menu, then inject Kuru.
 3. Open the F2 menu - your mod appears under the **Mods** tab.
 
 ## Check it works
@@ -30,7 +30,12 @@ is missing, check that the DLL is in `mods/` and that you built `Release`.
 
 ## The loop
 
-Edit, build, copy into `mods/`, then restart Rocket League and re-inject to load the new build - Kuru
-doesn't hot-reload a mod that's already loaded. <!-- TODO: Hot reloading might be a good idea -->
+To load changed code, eject Kuru (with auto-inject off), rebuild and replace the DLL, then inject again.
+Restart Rocket League if eject reports failure. Windows normally locks mapped DLLs against replacement, so copying/linking over one fails.
+See the [replacement procedure](../../installing.md#replacing-a-mod-dll).
 
-The [guides](../guides) go deeper from here.
+F2's **Reload** destroys the current instance and creates a fresh one from the same loaded DLL.
+Use it to test initialization and teardown, not to load a newly compiled binary. Disable/re-enable
+keeps the same instance and calls `OnUnload`/`OnLoad` again.
+
+The [guides](../../README.md) go deeper from here.

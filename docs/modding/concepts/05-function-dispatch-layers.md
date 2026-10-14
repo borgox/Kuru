@@ -15,11 +15,10 @@ function:
 | `ProcessInternal` | non-virtual | runs a *script* function's body (the interpreter) | frame `Locals` |
 | `CallFunction` | vtable 76 | bytecode call dispatch - where script *calls* a function | inline in bytecode |
 
-Kuru hooks only these three. The other delegate/event entry points all funnel into them, so hooking them
-separately would only cause duplicate fires: `ProcessDelegate` (vtable 68), `CallDelegate` (vtable 69) and
-`ProcessRemoteFunction` (vtable 71) are each always reached *through*
-`ProcessEvent`/`ProcessInternal`/`CallFunction`, and `ProcessState` (vtable 70) isn't safely hookable, so
-Kuru leaves them all alone.
+Kuru currently hooks only these three. It does not separately detour ProcessDelegate, CallDelegate,
+ProcessRemoteFunction, or ProcessState. Earlier research assigns additional vtable slots to these
+entry points, but their absence from the hook engine is not proof that every delegate or network
+path always passes through an intercepted layer. Direct native C++ calls can bypass reflection dispatch.
 
 ## The same call, several layers
 
@@ -34,24 +33,28 @@ layers the parameters wouldn't exist yet (a native at `CallFunction` hasn't mate
 
 ## The canonical layer
 
-Kuru solves this by choosing exactly **one** layer per function where a name-based hook fires - the layer that
-actually has the parameters. It's decided from the function's flags, with no guessing:
+Kuru chooses one canonical layer for `Any` hooks from the function's flags:
 
-- **Non-native with a script body** (`FUNC_Defined`) -> `ProcessInternal`. Such functions always funnel there,
-  and their parameters are in the frame `Locals`.
-- **Everything else** - natives (they read args inline) and body-less stubs - -> `CallFunction`. That's the
-  only layer they ever reach.
+- **Non-native with a script body** (`FUNC_Defined`) -> `ProcessInternal`, where the interpreter's parameters
+  are in `Locals`.
+- **Everything else** -> `CallFunction`. The native test is `iNative != 0` or `FUNC_Native` set.
 
-This is why you write `Hooks::Pre("Function ...")` once and it fires in the right place with usable
-parameters, without thinking about layers. (You can still target a specific layer with `PreVia` / `PostVia`
-when you need to.)
+This is Kuru's routing policy (`CanonicalLayer`), not an exhaustive description of possible engine calls.
+In particular, a native invoked only through ProcessEvent does not reach the canonical CallFunction
+layer, so an `Any` hook will not fire there. Use an explicit ProcessEvent hook when that is the path
+you intend to observe. Explicit layers can also produce multiple callbacks if a call crosses them.
+
+`Hooks::Pre("Function ...")` uses this automatic policy. `PreVia` / `PostVia` select an explicit layer when needed; they
+do not guarantee parameter reconstruction at that layer.
 
 ## Recursion dedup
 
 Some calls re-enter - a function ends up invoking itself again through a different layer. Kuru keeps a small
 per-thread stack of the functions currently being dispatched, so a name-based hook fires **once per top-level
 call** even under recursion. Only the canonical layer touches that stack, which is what pins the count at
-exactly one.
+one. The key is only `UFunction*`, not caller object: a nested call of the function on another object
+on the same thread is suppressed too. Explicit-layer hooks (`PreInternal`, `PreVia`/`PostVia`) bypass
+that `Any` policy.
 
 ## Why it's built this way
 

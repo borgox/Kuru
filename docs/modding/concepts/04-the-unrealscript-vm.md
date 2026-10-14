@@ -1,7 +1,7 @@
 # The UnrealScript VM
 
-Rocket League's gameplay logic is UnrealScript, compiled to bytecode and run by an interpreter inside the
-engine. A smaller set of functions are native - implemented in C++. How both run, and where a call's
+Rocket League exposes both UnrealScript bytecode and native C++ functions through reflection.
+The repository does not establish what proportion of gameplay runs in either form. How both run, and where a call's
 parameters live, is what the hook system is built on.
 
 ## Two kinds of function
@@ -20,7 +20,8 @@ The same `UFunction` machinery describes both; only how the body runs differs.
 Script bytecode is a stream of **opcodes**. Each opcode is one byte that selects a handler, followed by that
 handler's operands - which are themselves expressions, so bytecode nests.
 
-The engine holds a 256-entry table, **`GNatives`**, mapping each opcode byte to its handler:
+Kuru resolves **`GNatives`**, the opcode-handler table, and validates its first 256 pointer entries
+for byte-valued opcode dispatch. This does not establish the full table's size for indexed natives:
 
 ```cpp
 // roughly
@@ -33,25 +34,29 @@ expression's value into `result`. Evaluating an expression is: read the opcode b
 let it consume its operands and produce a value. Running a function is doing that in a loop until a return.
 
 Kuru resolves `GNatives` at startup and *borrows* it - to read a native call's arguments it asks the game's
-own handlers to evaluate them, so it never needs a table of opcode meanings. That matters because the fork's
-opcode byte-values aren't stock (see [the fork](01-rocket-league-is-a-ue3-fork.md)).
+own handlers to evaluate them, so this reconstruction does not need a handwritten opcode-meaning table.
+It still depends on the correct table address and calling shape; it does not validate a stock opcode map
+(see [the fork](01-rocket-league-is-a-ue3-fork.md)).
 
 ## The frame
 
-A running function has an `FFrame` - its execution state. In the Rocket League fork its fields sit here
-(shifted from stock UE3):
+A running script function has an `FFrame`. The current SDK declares:
 
 ```
 0x18  Node            the UStruct / UFunction being executed
 0x20  Object          the object it runs on
 0x28  Code            the instruction pointer into the bytecode
 0x30  Locals          the parameter + local-variable buffer
-0x38  PreviousFrame
-0x40  OutParms        chain of out-parameter destinations
+0x38  PreviousFrame  inferred; not independently disassembly-verified
+0x40  OutParms       inferred; not independently disassembly-verified
 ```
 
 `Code` and `Locals` are the two that matter for hooking: `Code` is where the interpreter is reading from, and
 `Locals` is where a script function's parameters and locals live.
+
+`Core/Script.hpp` records Node/Object/Code/Locals as disassembly-confirmed. Its later frame/state-frame
+fields include inferred layouts. Compile-time size checks enforce these declarations, not the game's
+runtime semantics. See [SDK verification annotations](../../../sdk-base/Core/Script.hpp).
 
 ## Where parameters live
 

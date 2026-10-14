@@ -4,25 +4,29 @@ A mod loader and C++ modding SDK for (offline) Rocket League.
 
 Kuru injects into Rocket League, hooks its UnrealScript and native functions, and gives mods a C++ API
 to read and edit game state, react to events, draw overlays, and register console commands. It resolves
-what it needs from the game at runtime, so it keeps working across game updates.
+many engine bindings at runtime. Game updates can still require new patterns, layout checks, and a
+regenerated SDK.
 
 ![Kuru's in-game overlay: console and object browser](docs/images/menu.webp)
 
 ## Features
 
-- Hook any UnrealScript or native function, and read, edit, or cancel the call.
+- Hook reflected functions reached through the supported dispatch layers, and inspect, edit, or block calls.
 - A reflected SDK generated from the game - typed access to Rocket League's classes.
 - In-game overlay (F2) and console (F3), with built-in object and function browsers.
 - Console commands, persistent settings, and a typed event system for mods.
-- Runtime resolution of the game's internals - no hardcoded addresses to break on updates.
+- Runtime resolution of engine bindings, with version-specific layouts and a fallback for interpreter globals.
 
 ## Install
 
-1. Download the latest release. <!-- release link -->
-2. Run the Kuru injector and launch Rocket League. <!-- injector flow -->
-3. Press F2 for the menu, F3 for the console.
+1. Download `Kuru.exe` from [releases](https://github.com/borgox/Kuru/releases).
+2. Run it, launch Rocket League, and wait at the main menu.
+3. Inject the loader, then press F2 for the menu or F3 for the console.
 
-Mods are `.dll` files - drop them in the `mods/` folder next to the loader.
+The injector includes the loader and SDK generator DLLs and normally extracts them to
+`%APPDATA%\Kuru\bin`. Use its mod installer, or copy mod DLLs into the `mods` folder next to the
+configured loader (normally `%APPDATA%\Kuru\bin\mods`). Mods are discovered when the loader starts,
+install them before injection. See [installation and updating](docs/installing.md).
 
 > Kuru is for offline and casual play. Don't use it where it could affect other players or your account.
 
@@ -46,14 +50,19 @@ public:
 KURU_EXPORT_MOD(MyMod, "MyMod", "your name", "0.1.0")
 ```
 
-Start from `templates/mod-template`, or read the [getting-started guide](docs/modding/getting-started).
+Use **Developer → Generate SDK** at the main menu. The generator writes a self-contained `mod-template`
+folder with the generated headers, SDK runtime, and matching ImGui sources embedded in its DLL.
+It needs no Kuru source checkout or external SDK paths. Start with the
+[environment setup guide](docs/modding/getting-started/environment-setup.md), the repository's
+`templates/mod-template` is the packaging source, not the generated bundle.
 
 ## Documentation
 
-- [Getting started](docs/modding/getting-started) - write your first mod
-- [Guides](docs/modding/guides) - hooks, the SDK, GUI, events, and more
-- [Concepts](docs/modding/concepts) - how Rocket League and Kuru work under the hood
-- [API reference](docs/api-reference)
+- [Documentation index](docs/README.md)
+- [Getting started](docs/modding/getting-started/what-is-a-mod.md) - write your first mod
+- [Guides](docs/README.md) - hooks, the SDK, GUI, events, and more
+- [Concepts](docs/README.md) - how Rocket League and Kuru work under the hood
+- [API reference](docs/README.md)
 - [Building from source](docs/building.md)
 
 ## Built with

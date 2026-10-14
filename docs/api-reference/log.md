@@ -1,15 +1,22 @@
 # Kuru logging
 
-Write to the F3 console and the log file. These are in the `Kuru` namespace directly (`Kuru::Info`). Lines are
-tagged with your mod's name. See [debugging](../modding/guides/debugging.md).
+Logging functions live directly in `Kuru`. With the host API initialized they write tagged lines to
+F3 and `%APPDATA%\Kuru\kuru.log`. See [debugging](../modding/guides/debugging.md).
 
-## Functions
+| Function | Meaning |
+| --- | --- |
+| `Trace(std::string_view)` | Detailed diagnostic line |
+| `Info(std::string_view)` | Normal message |
+| `Warning(std::string_view)` | Warning |
+| `Error(std::string_view)` | Error |
+| `Log(LogLevel, std::string_view)` | Explicit level; the four helpers above delegate to it |
 
-`Info(std::string_view message)`  a normal log line.
-`Warning(std::string_view message)`  a warning.
-`Error(std::string_view message)`  an error.
-`Trace(std::string_view message)`  a low-level trace line, hidden unless the console level includes it.
+`LogLevel` contains Trace, Info, Warning, and Error. The console initially shows Trace and above.
+Its level/tag filters affect display only; all levels are written to the file. The in-memory console
+keeps up to 4000 entries. When the file sink first opens a log over 5 MiB, it deletes the old file
+rather than archiving it. `clear` only clears the in-memory history.
 
-## Levels
-
-`Kuru::LogLevel` is `Trace`, `Info`, `Warning`, or `Error`. The console filters by level.
+`SetLogger(LogFunc)`, where `LogFunc` is `void(*)(LogLevel, const char*)`, replaces this mod's SDK
+logging callback. Host initialization installs a callback that forwards to the shared tagged log.
+Replacing it afterward diverts this mod's output from that route. With no callback, the SDK uses
+Windows debug output. Keep a custom callback alive while installed; ordinary mods need no override.

@@ -1,11 +1,12 @@
 # Distributing your mod
 
 A mod is a single `.dll`. To share it, hand people the DLL - they drop it in Kuru's `mods/` folder next to
-the loader and re-inject.
+the loader before injection, or use the injector's mod installer. Eject before replacing a loaded DLL.
 
 ## Build for release
 
-Build `Release`, not `Debug` - it matches the game's runtime and it's what users run:
+Build x64 `Release` for distribution. It uses the release C++ runtime and avoids requiring a debug
+runtime on users' machines. It does not by itself establish game-layout or ABI compatibility:
 
 ```
 cmake --build build --config Release
@@ -17,7 +18,11 @@ Ship `build/Release/YourMod.dll`.
 
 A mod is compiled against a version of the Kuru SDK. Kuru refuses to load a mod built for a newer version
 than the running loader (and says so in the log), so build against the version you target and note it with
-your download. Older mods keep working under a newer loader.
+your download. This checks the host API number, not the Rocket League build or generated layouts.
+
+Older binaries are not guaranteed to work after game or ImGui changes. API v3 introduced owned task
+cleanup; API v4 added owned hook/event/command cleanup. Rebuild with the current SDK to benefit from both.
+Use the template's bundled ImGui version so it matches the host's shared context.
 
 ## Be a good citizen
 

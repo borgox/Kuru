@@ -1,6 +1,6 @@
 # Your first mod
 
-The template's `src/MyMod.cpp` is already a complete mod:
+The template's `src/MyMod.cpp` is already a complete mod. This equivalent example omits its anonymous namespace:
 
 ```cpp
 #include <Kuru/Kuru.hpp>
@@ -36,7 +36,7 @@ Piece by piece:
 - `KURU_EXPORT_MOD(MyMod, "MyMod", "your name", "0.1.0")` - the macro that makes the DLL a Kuru mod: it
   wires up the name, author, and version Kuru shows in the menu.
 
-That's a working mod. From here the [guides](../guides) cover hooks, reading game state, the GUI, and
+That's a working mod. From here the [guides](../../README.md) cover hooks, reading game state, the GUI, and
 events in depth.
 
 ## Next
