@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(Kuru LANGUAGES CXX)
+project(Kuru VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,7 +25,7 @@ add_subdirectory(injector)
 # Release archives contain the executable and its license notices.
 set(CPACK_GENERATOR "ZIP")
 set(CPACK_PACKAGE_NAME "Kuru")
-set(CPACK_PACKAGE_VERSION "0.1.0")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_PACKAGE_FILE_NAME "Kuru-${CPACK_PACKAGE_VERSION}-windows-x64")
 set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
 set(CPACK_INSTALL_CMAKE_PROJECTS "${CMAKE_BINARY_DIR};${PROJECT_NAME};KuruRelease;/")

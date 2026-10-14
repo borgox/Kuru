@@ -61,3 +61,14 @@ set_target_properties(KuruInjector PROPERTIES OUTPUT_NAME "Kuru")
 install(TARGETS KuruInjector RUNTIME DESTINATION . COMPONENT KuruRelease)
 install(FILES "${PROJECT_SOURCE_DIR}/LICENSE" "${PROJECT_SOURCE_DIR}/THIRD_PARTY_LICENSES"
     DESTINATION . COMPONENT KuruRelease)
+
+# Use the same source manifest as the generator's embedded template.
+get_target_property(_release_imgui_includes imgui INTERFACE_INCLUDE_DIRECTORIES)
+list(GET _release_imgui_includes 0 _release_imgui_dir)
+add_custom_target(KuruReleaseTemplate
+    COMMAND ${KURU_PYTHON} "${PROJECT_SOURCE_DIR}/libs/KuruSDKGen/package_template.py"
+        "${PROJECT_SOURCE_DIR}" "${_release_imgui_dir}"
+        "${PROJECT_SOURCE_DIR}/build/releases/Kuru-mod-template-${PROJECT_VERSION}.zip"
+        --sdk "${KURU_GENERATED_SDK}"
+    COMMENT "Packaging the standalone mod template with the generated SDK"
+    VERBATIM)

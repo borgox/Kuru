@@ -1,6 +1,7 @@
 # Kuru mod template
 
-The SDK generator produces this self-contained folder beside `generated-sdk`.
+Download the template ZIP from Kuru's releases, or generate this self-contained folder beside
+`generated-sdk` with the SDK generator.
 Copy or rename the entire folder, then edit `src/MyMod.cpp`.
 The copy in the Kuru repository is the packaging source; use the generated folder to build a mod.
 

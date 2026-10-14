@@ -46,11 +46,17 @@ After building `KuruInjector` in Release, run from the repository root:
 
 ```powershell
 cpack --config build/msvc-x64-debug/CPackConfig.cmake -C Release -B build/releases
+cmake --build build/msvc-x64-debug --config Release --target KuruReleaseTemplate
 ```
 
-The ZIP contains `Kuru.exe`, `LICENSE`, and `THIRD_PARTY_LICENSES`. The executable also embeds
+The runtime ZIP contains `Kuru.exe`, `LICENSE`, and `THIRD_PARTY_LICENSES`. The template ZIP contains
+the example mod, generated SDK, SDK runtime, matching ImGui sources, and their licenses. Both archives
+are written to `build/releases`. Publish both for each release. The template uses the SDK at
+`KURU_GENERATED_SDK`; regenerate it from the supported game build before publishing.
+
+The executable also embeds
 both license files and displays them in its Licenses tab, so notices remain accessible when
-the executable is copied on its own. Update the package version in the root `CMakeLists.txt`
+the executable is copied on its own. Update the project version in the root `CMakeLists.txt`
 alongside the injector version before publishing a new version.
 
 ## Other targets

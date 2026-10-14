@@ -50,7 +50,8 @@ public:
 KURU_EXPORT_MOD(MyMod, "MyMod", "your name", "0.1.0")
 ```
 
-Use **Developer → Generate SDK** at the main menu. The generator writes a self-contained `mod-template`
+Download `Kuru-mod-template-1.0.0.zip` from [releases](https://github.com/borgox/Kuru/releases),
+or use **Developer → Generate SDK** at the main menu. The generator writes a self-contained `mod-template`
 folder with the generated headers, SDK runtime, and matching ImGui sources embedded in its DLL.
 It needs no Kuru source checkout or external SDK paths. Start with the
 [environment setup guide](docs/modding/getting-started/environment-setup.md), the repository's
