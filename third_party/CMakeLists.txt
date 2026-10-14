@@ -3,7 +3,7 @@
 
 include(FetchContent)
 
-# MinHook, MIT licensed.
+# MinHook, BSD 2-Clause licensed (including bundled disassembler notices).
 FetchContent_Declare(
     minhook
     GIT_REPOSITORY https://github.com/TsudaKageyu/minhook.git

@@ -574,6 +574,14 @@ void RenderUi(HWND hwnd) {
 
             ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("Licenses")) {
+            ImGui::BeginChild("licenses", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing()),
+                              ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+            const char* text = reinterpret_cast<const char*>(KURU_NOTICES_DATA);
+            ImGui::TextUnformatted(text, text + KURU_NOTICES_DATA_size);
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
         ImGui::EndTabBar();
     }
 

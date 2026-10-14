@@ -6,6 +6,19 @@ set(_embed_dir ${CMAKE_CURRENT_BINARY_DIR}/embedded)
 file(MAKE_DIRECTORY ${_embed_dir})
 set(_embed_script ${CMAKE_CURRENT_SOURCE_DIR}/embed_file.py)
 
+# Keep notices available even when only Kuru.exe is distributed.
+set(_notices "${_embed_dir}/NOTICES.txt")
+file(READ "${PROJECT_SOURCE_DIR}/LICENSE" _kuru_license)
+file(READ "${PROJECT_SOURCE_DIR}/THIRD_PARTY_LICENSES" _third_party_licenses)
+file(CONFIGURE OUTPUT "${_notices}"
+    CONTENT "@_kuru_license@\n@_third_party_licenses@" @ONLY)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/LICENSE" "${PROJECT_SOURCE_DIR}/THIRD_PARTY_LICENSES")
+add_custom_command(OUTPUT ${_embed_dir}/notices.cpp
+    COMMAND ${KURU_PYTHON} ${_embed_script} ${_notices} ${_embed_dir}/notices.cpp KURU_NOTICES_DATA
+    DEPENDS ${_notices} ${_embed_script}
+    VERBATIM)
+
 # Embed a built target's DLL as a C++ byte array.
 add_custom_command(OUTPUT ${_embed_dir}/loader.cpp
     COMMAND ${KURU_PYTHON} ${_embed_script} $<TARGET_FILE:KuruLoader> ${_embed_dir}/loader.cpp KURU_LOADER_DATA
@@ -35,6 +48,7 @@ add_executable(KuruInjector WIN32
     ${_embed_dir}/loader.cpp
     ${_embed_dir}/sdkgen.cpp
     ${_embed_dir}/font.cpp
+    ${_embed_dir}/notices.cpp
 )
 
 target_include_directories(KuruInjector PRIVATE src)
@@ -43,3 +57,7 @@ target_compile_definitions(KuruInjector PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CR
 
 # The single shippable file is Kuru.exe (with the loader + SDK generator embedded inside it).
 set_target_properties(KuruInjector PROPERTIES OUTPUT_NAME "Kuru")
+
+install(TARGETS KuruInjector RUNTIME DESTINATION . COMPONENT KuruRelease)
+install(FILES "${PROJECT_SOURCE_DIR}/LICENSE" "${PROJECT_SOURCE_DIR}/THIRD_PARTY_LICENSES"
+    DESTINATION . COMPONENT KuruRelease)

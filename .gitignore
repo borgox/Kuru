@@ -17,3 +17,21 @@ generated/
 *.lib
 *.exp
 *.log
+
+# Local secrets (keep sanitized examples available for contributors).
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Crash diagnostics.
+*.dmp
+*.mdmp
+*.stackdump
+
+# Machine-specific CMake state and IDE build directories.
+CMakeUserPresets.json
+compile_commands.json
+/cmake-build-*/
+/CMakeCache.txt
+/CMakeFiles/

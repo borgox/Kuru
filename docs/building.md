@@ -40,6 +40,19 @@ build/msvc-x64-debug/injector/Release/Kuru.exe
 Use `Release` for injected builds. The preset's directory is named `msvc-x64-debug`, but `--config Release`
 selects Release with this multi-configuration Visual Studio generator.
 
+## Packaging a release
+
+After building `KuruInjector` in Release, run from the repository root:
+
+```powershell
+cpack --config build/msvc-x64-debug/CPackConfig.cmake -C Release -B build/releases
+```
+
+The ZIP contains `Kuru.exe`, `LICENSE`, and `THIRD_PARTY_LICENSES`. The executable also embeds
+both license files and displays them in its Licenses tab, so notices remain accessible when
+the executable is copied on its own. Update the package version in the root `CMakeLists.txt`
+alongside the injector version before publishing a new version.
+
 ## Other targets
 
 `KuruSDKGen` is the injectable SDK generator (a separate DLL). It can be built without the generated
