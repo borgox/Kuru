@@ -25,6 +25,7 @@ assumptions, or function behavior. Use this checklist without assuming regenerat
 | --- | --- | --- |
 | A resolver fails | pattern, layout, readiness, or pointer validation changed | [finding patterns](finding-patterns.md) |
 | Reflection or names are garbage | core layout or globals resolution is wrong | [verifying layouts](verifying-layouts.md) |
+| Generated `sizeof` assertions fail | Reflected field sizes or handwritten bases no longer match | Check delegate footprints and engine-base offsets; keep the assertions and regenerate after fixing the SDK |
 | A field or parameter reads incorrectly | stale layout, wrong function/layer, or unsupported argument handling | verify metadata and hook path before editing |
 | A smoke test passes | the exercised paths worked | test the remaining paths; don't infer full compatibility |
 

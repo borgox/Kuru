@@ -8,9 +8,15 @@
 #include <Core/PropertyTag.hpp>
 #include <Core/Strings.hpp>
 
+#include <array>
 #include <cstdint>
 
 namespace Kuru::SDK {
+
+// Engine delegates occupy 32 reflected bytes in the build verified on 2026-10-29.
+// Their invocation layout is not modeled; keep the storage opaque.
+using FEngineDelegateStorage = std::array<std::uint8_t, 0x20>;
+static_assert(sizeof(FEngineDelegateStorage) == 0x20);
 
 class AActor;
 class ALevelGridVolume;
@@ -667,7 +673,7 @@ public:
     float MapLoadTimePS4;            // 0x0934
     float MapLoadTimeXboxOne;        // 0x0938
     float MapLoadTimeSwitch;         // 0x093C
-    FMultiScriptDelegate EventPreLaunchURL; // 0x0940, reflected as __EventPreLaunchURL__Delegate
+    FEngineDelegateStorage EventPreLaunchURL; // 0x0940, reflected as __EventPreLaunchURL__Delegate
 };
 
 class UGameViewportClient : public UScriptViewportClient {
@@ -703,15 +709,15 @@ public:
     float ProgressFadeTime;          // 0x016C
     TArray<FString> DebugProperties; // 0x0170
     FPointer ScaleformInteraction;   // 0x0180
-    FMultiScriptDelegate HandleInputKey;  // 0x0188, reflected as __HandleInputKey__Delegate
-    FMultiScriptDelegate HandleInputAxis; // 0x01A0, reflected as __HandleInputAxis__Delegate
-    FMultiScriptDelegate HandleInputChar; // 0x01B8, reflected as __HandleInputChar__Delegate
-    FMultiScriptDelegate EventScreenDraggedOnNewScreen; // 0x01D0, reflected as __EventScreenDraggedOnNewScreen__Delegate
-    FMultiScriptDelegate EventScaleformEnabledChanged; // 0x01E8, reflected as __EventScaleformEnabledChanged__Delegate
-    FMultiScriptDelegate EventGamepadInputAPIChanged; // 0x0200, reflected as __EventGamepadInputAPIChanged__Delegate
-    FMultiScriptDelegate EventGamepadConnectionStatusChanged; // 0x0218, reflected as __EventGamepadConnectionStatusChanged__Delegate
-    FMultiScriptDelegate EventGampadConnected; // 0x0230, reflected as __EventGampadConnected__Delegate; RL spelling
-    FMultiScriptDelegate EventGampadDisconnected; // 0x0248, reflected as __EventGampadDisconnected__Delegate; RL spelling
+    FEngineDelegateStorage HandleInputKey;  // 0x0188, reflected as __HandleInputKey__Delegate
+    FEngineDelegateStorage HandleInputAxis; // 0x01A8, reflected as __HandleInputAxis__Delegate
+    FEngineDelegateStorage HandleInputChar; // 0x01C8, reflected as __HandleInputChar__Delegate
+    FEngineDelegateStorage EventScreenDraggedOnNewScreen; // 0x01E8, reflected as __EventScreenDraggedOnNewScreen__Delegate
+    FEngineDelegateStorage EventScaleformEnabledChanged; // 0x0208, reflected as __EventScaleformEnabledChanged__Delegate
+    FEngineDelegateStorage EventGamepadInputAPIChanged; // 0x0228, reflected as __EventGamepadInputAPIChanged__Delegate
+    FEngineDelegateStorage EventGamepadConnectionStatusChanged; // 0x0248, reflected as __EventGamepadConnectionStatusChanged__Delegate
+    FEngineDelegateStorage EventGampadConnected; // 0x0268, reflected as __EventGampadConnected__Delegate; RL spelling
+    FEngineDelegateStorage EventGampadDisconnected; // 0x0288, reflected as __EventGampadDisconnected__Delegate; RL spelling
 
     [[nodiscard]] bool HasViewportClientFlag(std::uint32_t mask) const noexcept { return (ViewportClientFlags & mask) != 0; }
     [[nodiscard]] bool bShowTitleSafeZone() const noexcept { return HasViewportClientFlag(0x001u); }
@@ -728,34 +734,34 @@ class UGameEngine : public UEngine {
 public:
     [[nodiscard]] static UClass* StaticClass();
 
-    UObject* GPendingLevel;          // 0x0958
-    FString PendingLevelPlayerControllerClassName; // 0x0960
-    FURLMirror LastURL;              // 0x0970
-    FURLMirror LastRemoteURL;        // 0x09D0
-    TArray<FString> ServerActors;    // 0x0A30
-    FString TravelURL;               // 0x0A40
-    std::uint8_t TravelType;         // 0x0A50
-    std::uint8_t Pad_0A51[0x03];     // 0x0A51
-    std::uint32_t GameEngineFlags;   // 0x0A54, reflected bool bitfield
-    UObject* OnlineSubsystem;        // 0x0A58
-    UObject* DLCEnumerator;          // 0x0A60
-    FString DownloadableContentEnumeratorClassName; // 0x0A68
-    UObject* DLCManager;             // 0x0A78
-    FString DownloadableContentManagerClassName; // 0x0A80
-    TArray<FString> LevelsToLoadForPendingMapChange; // 0x0A90
-    TArray<UObject*> LoadedLevelsForPendingMapChange; // 0x0AA0
-    FString PendingMapChangeFailureDescription; // 0x0AB0
-    float MaxDeltaTime;              // 0x0AC0
-    std::uint32_t Pad_0AC4;          // 0x0AC4
-    FString SecondaryViewportClientClassName; // 0x0AC8
-    TArray<UGameViewportClient*> SecondaryViewportClients; // 0x0AD8
-    TArray<FPointer> SecondaryViewportFrames; // 0x0AE8
-    TArray<std::uint8_t> PendingLevelStreamingStatusUpdates; // 0x0AF8
-    TArray<UObject*> ObjectReferencers; // 0x0B08
-    TArray<std::uint8_t> PackagesToFullyLoad; // 0x0B18
-    TArray<std::uint8_t> NamedNetDrivers; // 0x0B28
-    TArray<FName> AnimTags;          // 0x0B38
-    FMultiScriptDelegate EventTravelMapNotFound; // 0x0B48, reflected as __EventTravelMapNotFound__Delegate
+    UObject* GPendingLevel;          // 0x0960
+    FString PendingLevelPlayerControllerClassName; // 0x0968
+    FURLMirror LastURL;              // 0x0978
+    FURLMirror LastRemoteURL;        // 0x09D8
+    TArray<FString> ServerActors;    // 0x0A38
+    FString TravelURL;               // 0x0A48
+    std::uint8_t TravelType;         // 0x0A58
+    std::uint8_t Pad_0A59[0x03];     // 0x0A59
+    std::uint32_t GameEngineFlags;   // 0x0A5C, reflected bool bitfield
+    UObject* OnlineSubsystem;        // 0x0A60
+    UObject* DLCEnumerator;          // 0x0A68
+    FString DownloadableContentEnumeratorClassName; // 0x0A70
+    UObject* DLCManager;             // 0x0A80
+    FString DownloadableContentManagerClassName; // 0x0A88
+    TArray<FString> LevelsToLoadForPendingMapChange; // 0x0A98
+    TArray<UObject*> LoadedLevelsForPendingMapChange; // 0x0AA8
+    FString PendingMapChangeFailureDescription; // 0x0AB8
+    float MaxDeltaTime;              // 0x0AC8
+    std::uint32_t Pad_0ACC;          // 0x0ACC
+    FString SecondaryViewportClientClassName; // 0x0AD0
+    TArray<UGameViewportClient*> SecondaryViewportClients; // 0x0AE0
+    TArray<FPointer> SecondaryViewportFrames; // 0x0AF0
+    TArray<std::uint8_t> PendingLevelStreamingStatusUpdates; // 0x0B00
+    TArray<UObject*> ObjectReferencers; // 0x0B10
+    TArray<std::uint8_t> PackagesToFullyLoad; // 0x0B20
+    TArray<std::uint8_t> NamedNetDrivers; // 0x0B30
+    TArray<FName> AnimTags;          // 0x0B40
+    FEngineDelegateStorage EventTravelMapNotFound; // 0x0B50, reflected as __EventTravelMapNotFound__Delegate
 
     [[nodiscard]] bool HasGameEngineFlag(std::uint32_t mask) const noexcept { return (GameEngineFlags & mask) != 0; }
     [[nodiscard]] bool bWorldWasLoadedThisTick() const noexcept { return HasGameEngineFlag(0x001u); }
@@ -883,7 +889,7 @@ static_assert(offsetof(UWorld, DominantPointLights) == 0x308);
 static_assert(offsetof(UWorld, ExtraReferencedObjects) == 0x340);
 static_assert(offsetof(UWorld, Observers) == 0x360);
 static_assert(offsetof(UWorld, NativeTailState) == 0x370);
-static_assert(sizeof(UEngine) == 0x958);
+static_assert(sizeof(UEngine) == 0x960);
 static_assert(offsetof(UEngine, GameShareClassName) == 0x68);
 static_assert(offsetof(UEngine, BuildID) == 0x98);
 static_assert(offsetof(UEngine, TinyFont) == 0xA8);
@@ -901,19 +907,19 @@ static_assert(offsetof(UEngine, TransitionDescription) == 0x800);
 static_assert(offsetof(UEngine, DefaultSelectedMaterialColor) == 0x884);
 static_assert(offsetof(UEngine, LoadingMovieStartTime) == 0x8F0);
 static_assert(offsetof(UEngine, EventPreLaunchURL) == 0x940);
-static_assert(sizeof(UGameViewportClient) == 0x260);
+static_assert(sizeof(UGameViewportClient) == 0x2A8);
 static_assert(offsetof(UGameViewportClient, VfTable_FExec) == 0x68);
 static_assert(offsetof(UGameViewportClient, GlobalInteractions) == 0x80);
 static_assert(offsetof(UGameViewportClient, ViewportClientFlags) == 0x108);
 static_assert(offsetof(UGameViewportClient, HandleInputKey) == 0x188);
-static_assert(offsetof(UGameViewportClient, EventGampadDisconnected) == 0x248);
-static_assert(sizeof(UGameEngine) == 0xB60);
-static_assert(offsetof(UGameEngine, GPendingLevel) == 0x958);
-static_assert(offsetof(UGameEngine, LastURL) == 0x970);
-static_assert(offsetof(UGameEngine, LastRemoteURL) == 0x9D0);
-static_assert(offsetof(UGameEngine, ServerActors) == 0xA30);
-static_assert(offsetof(UGameEngine, GameEngineFlags) == 0xA54);
-static_assert(offsetof(UGameEngine, EventTravelMapNotFound) == 0xB48);
+static_assert(offsetof(UGameViewportClient, EventGampadDisconnected) == 0x288);
+static_assert(sizeof(UGameEngine) == 0xB70);
+static_assert(offsetof(UGameEngine, GPendingLevel) == 0x960);
+static_assert(offsetof(UGameEngine, LastURL) == 0x978);
+static_assert(offsetof(UGameEngine, LastRemoteURL) == 0x9D8);
+static_assert(offsetof(UGameEngine, ServerActors) == 0xA38);
+static_assert(offsetof(UGameEngine, GameEngineFlags) == 0xA5C);
+static_assert(offsetof(UGameEngine, EventTravelMapNotFound) == 0xB50);
 
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop

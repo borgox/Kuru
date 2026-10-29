@@ -22,8 +22,9 @@ The fork changes the details - and it changes enough that stock UE3 knowledge, o
 UE3 game, is simply wrong for Rocket League:
 
 - **Struct layouts.** The recovered `FFrame` fields Node/Object/Code/Locals sit at `0x18/0x20/0x28/0x30`.
-  The SDK comments identify these four as disassembly-confirmed; later fields are inferred. A single
-  `FScriptDelegate` is 16 bytes, while the modeled delegate-property storage is 24 bytes.
+  The SDK comments identify these four as disassembly-confirmed; later fields are inferred. The SDK
+  models a single `FScriptDelegate` as 16 bytes and the legacy property layout as 24 bytes. Current
+  engine delegate properties report 32 bytes and are kept opaque; see [delegates](09-delegates.md).
 - **Bytecode.** The SDK deliberately omits a stock `EX_*` opcode-value table. Earlier fork research
   reports differences; decode through verified current handlers rather than assuming a stock table.
 - **Added and repurposed pieces.** Psyonix-specific fields and possible flag reinterpretations must be

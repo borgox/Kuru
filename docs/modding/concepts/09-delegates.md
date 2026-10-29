@@ -7,22 +7,31 @@ still needs a retained binary trace or other verification.
 
 ## FScriptDelegate
 
-A single-cast delegate is an `FScriptDelegate`: the object to call and the name of the function on it, 16
-bytes, exactly as in stock UE3:
+The SDK models a single binding as `FScriptDelegate`: an object pointer and a function name,
+occupying 16 bytes:
 
-```
+```text
 0x00  Object          UObject* to call the function on
 0x08  FunctionName    FName of the function
 ```
 
-## Delegate properties: FMultiScriptDelegate
+This describes the SDK type, it does not establish the internal format of every delegate property
+in the current game.
 
-A delegate *property* on a Rocket League object isn't a bare `FScriptDelegate` - it's **24 bytes**. The
-first 16 are an inline single binding (object + function name); the extra 8-byte field at `0x10` is a
-pointer to a `TArray<FScriptDelegate>` in the current SDK model. This is `FMultiScriptDelegate`, size
-`0x18`. Its helper `Broadcast` walks a nonempty multicast list when present and otherwise invokes the
-inline binding. That helper does not establish exactly when the game's own allocator creates or
-switches representations; don't infer that rule from a null pointer or the C++ size assertion alone.
+## Delegate property storage
+
+`FMultiScriptDelegate` is the SDK's legacy 24-byte model: a single binding followed by a pointer
+to a multicast list. Its `Broadcast` helper follows that modeled representation. Do not cast a
+larger game property to this type or call the helper on unverified engine storage.
+
+Read-only reflection on 2026-10-29 reports **32-byte** delegate properties in the engine and
+viewport classes. The handwritten SDK uses opaque `FEngineDelegateStorage` for those fields and
+updates subsequent offsets accordingly. Their invocation format remains unverified.
+
+The generator compares each delegate property's reflected element size with the SDK type's size.
+Matching 24-byte slots keep the typed model; other sizes are emitted as opaque bytes, including
+in fixed arrays and function parameter blocks. This preserves surrounding field offsets without
+assuming that a new footprint has the old invocation semantics.
 
 ## Delegate entry points
 

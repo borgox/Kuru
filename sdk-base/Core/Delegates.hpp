@@ -27,7 +27,8 @@ struct FScriptDelegate {
     }
 };
 
-// An inline single binding plus a ointer to a multicast invocation list
+// Modeled legacy 24-byte layout: an inline binding and a multicast-list pointer.
+// Do not use this type for current 32-byte engine delegate slots.
 struct FMultiScriptDelegate {
     FScriptDelegate SingleDelegate;                        // 0x00 (16 bytes)
     TArray<FScriptDelegate>* MulticastDelegate = nullptr;  // 0x10 - null unless multicast

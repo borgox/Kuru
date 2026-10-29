@@ -35,7 +35,7 @@ float gDpiScale = 1.0f;
 // Persisted settings, loaded at startup and saved on exit. The UI mirrors edits back into it.
 Kuru::Injector::Config gConfig;
 
-constexpr const char* kInjectorVersion = "1.0.0";
+constexpr const char* kInjectorVersion = "1.0.1";
 
 // --- D3D11 plumbing -------------------------------------------------------------------------------
 ID3D11Device* gDevice = nullptr;
