@@ -599,7 +599,7 @@ void LogSampleObjects(const Kuru::Common::RocketLeagueGlobals& globals) {
 
 // --- In-memory model builders ---------------------------------------------------------------------
 Kuru::Common::DumpSchema::PropertyRecord BuildPropertyRecord(
-    const Kuru::Common::RocketLeagueGlobals& globals, const UPropertyRuntime* prop) {
+    const Kuru::Common::RocketLeagueGlobals& globals, const UPropertyRuntime* prop, unsigned depth = 0) {
     Kuru::Common::DumpSchema::PropertyRecord record;
     const std::string kind = ClassName(globals, prop);
     record.name = ObjectName(globals, prop);
@@ -626,7 +626,12 @@ Kuru::Common::DumpSchema::PropertyRecord BuildPropertyRecord(
         if (ReadableObject(typed)) record.bitMask = Hex(typed->BitMask);
     } else if (kind == "ArrayProperty") {
         const auto* typed = reinterpret_cast<const UArrayPropertyRuntime*>(prop);
-        if (ReadableObject(typed)) record.inner = PropertyReferenceName(globals, typed->Inner);
+        if (ReadableObject(typed)) {
+            record.inner = PropertyReferenceName(globals, typed->Inner);
+            if (depth < 16 && typed->Inner && ReadableObject(typed->Inner)) {
+                record.innerProperties.push_back(BuildPropertyRecord(globals, typed->Inner, depth + 1));
+            }
+        }
     } else if (kind == "MapProperty") {
         const auto* typed = reinterpret_cast<const UMapPropertyRuntime*>(prop);
         if (ReadableObject(typed)) {

@@ -38,7 +38,7 @@ struct PropertyInfo {
     std::string Kind;
     std::string StructName;
     std::string PropertyClass;
-    std::string InnerKind;
+    std::vector<PropertyInfo> InnerProperties;
     std::string EnumName;
     std::string BitMask;
     std::uint64_t Flags = 0;
@@ -127,13 +127,13 @@ struct DumpModel {
 [[nodiscard]] DumpModel BuildModel(const Kuru::Common::DumpSchema::DumpDocument& document) {
     DumpModel model;
 
-    const auto convertProperty = [](const Kuru::Common::DumpSchema::PropertyRecord& source) {
+    const auto convertProperty = [](auto&& self, const Kuru::Common::DumpSchema::PropertyRecord& source) -> PropertyInfo {
         PropertyInfo property;
         property.Name = source.name;
         property.Kind = source.kind;
         property.StructName = source.structName;
         property.PropertyClass = source.propertyClass;
-        property.InnerKind = source.inner;
+        for (const auto& inner : source.innerProperties) property.InnerProperties.push_back(self(self, inner));
         property.EnumName = source.enumName;
         property.BitMask = source.bitMask;
         property.Flags = source.flags;
@@ -156,7 +156,7 @@ struct DumpModel {
         type.SuperName = source.superName.empty() ? "None" : source.superName;
         type.PropertySize = static_cast<std::uint32_t>(std::max(source.propertySize, 0));
         type.MinAlignment = static_cast<std::uint32_t>(std::max(source.minAlignment, 1));
-        for (const auto& property : source.properties) type.Properties.push_back(convertProperty(property));
+        for (const auto& property : source.properties) type.Properties.push_back(convertProperty(convertProperty, property));
         type.EnumNames = source.enumNames;
         for (const auto& sourceFunction : source.functions) {
             FunctionInfo function;
@@ -164,7 +164,7 @@ struct DumpModel {
             function.Name = LeafName(function.FullName);
             function.ParamsSize = sourceFunction.parmsSize;
             function.ReturnValueOffset = sourceFunction.returnValueOffset;
-            for (const auto& parameter : sourceFunction.params) function.Params.push_back(convertProperty(parameter));
+            for (const auto& parameter : sourceFunction.params) function.Params.push_back(convertProperty(convertProperty, parameter));
             type.Functions.push_back(std::move(function));
         }
 
@@ -284,6 +284,18 @@ struct DumpModel {
             ? "Kuru::SDK::FMultiScriptDelegate" : "";
     }
     if (prop.Kind == "ArrayProperty") {
+        if (prop.InnerProperties.size() == 1) {
+            const PropertyInfo& inner = prop.InnerProperties.front();
+            std::string elementType = FieldType(inner, model);
+            if (elementType.empty() && inner.ElementSize != 0) {
+                elementType = "std::array<std::uint8_t, " + std::to_string(inner.ElementSize) + ">";
+            }
+            if (!elementType.empty()) {
+                if (inner.ArrayDim > 1) elementType = "std::array<" + elementType + ", " + std::to_string(inner.ArrayDim) + ">";
+                return "Kuru::SDK::TArray<" + elementType + ">";
+            }
+        }
+        // Older documents did not retain the inner property's metadata.
         return "Kuru::SDK::TArray<std::uint8_t>";
     }
     if (prop.Kind == "MapProperty" && prop.ElementSize == sizeof(void*) * 10) {
@@ -872,14 +884,19 @@ void AppendBaseExtensionWrapper(std::string& text, const TypeInfo& type, const F
         if (!visiting.insert(type.FullName).second) {
             return;
         }
-        for (const PropertyInfo& property : type.Properties) {
+        auto visitProperty = [&](auto&& recurse, const PropertyInfo& property) -> void {
+            for (const auto& inner : property.InnerProperties) recurse(recurse, inner);
             if (property.Kind != "StructProperty" || property.StructName.empty() || IsManualType(property.StructName)) {
-                continue;
+                return;
             }
             if (const auto dependency = byName.find(property.StructName); dependency != byName.end() &&
                 dependency->second->ClassName == "ScriptStruct") {
                 self(self, *dependency->second);
             }
+        };
+        for (const PropertyInfo& property : type.Properties) visitProperty(visitProperty, property);
+        for (const auto& function : type.Functions) {
+            for (const auto& parameter : function.Params) visitProperty(visitProperty, parameter);
         }
         if (!type.SuperName.empty() && type.SuperName != "None" && !IsManualType(type.SuperName)) {
             if (const auto super = byName.find(type.SuperName); super != byName.end()) {

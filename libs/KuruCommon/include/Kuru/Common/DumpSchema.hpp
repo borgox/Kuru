@@ -25,6 +25,8 @@ struct PropertyRecord {
     std::int32_t elementSize = 0;
     std::int32_t arrayDim = 0;
     std::string inner;
+    // A dynamic array has one inner property, including its referenced type and size.
+    std::vector<PropertyRecord> innerProperties;
     std::string outer;
     std::string propertyClass;
     std::string metaClass;

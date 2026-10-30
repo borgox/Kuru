@@ -28,6 +28,11 @@ class with fields at their offsets, a params struct per function, enums, and so 
 The result is `generated-sdk`, the runtime reflection frozen into code. The Objects tab and the generated
 headers are, again, two views of the same data.
 
+Dynamic arrays use the reflected element type. For example, a product array is generated as
+`Kuru::SDK::TArray<Kuru::RL::UProduct_TA*>`, so indexing it returns a product pointer without a cast.
+This also applies to function parameters and return values. Unsupported element types retain their
+reflected byte size as opaque storage; they do not gain typed access to unverified internals.
+
 The current generator also writes a self-contained `mod-template` folder: SDK runtime and mod-facing
 headers, template code/build files, matching ImGui core sources, licenses, and a copy of the fresh game
 headers. The nongenerated files are embedded in `KuruSDKGen.dll` at build time, not read from the
